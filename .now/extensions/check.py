@@ -1,7 +1,8 @@
-from now_sdk import Context, argument, command
+from now_sdk import Context, argument, command, mode
 
 
 @command("check")
+@mode("dev")
 @argument("path", default=".")
 def check(ctx: Context) -> None:
     """Format, lint, and type-check the project."""

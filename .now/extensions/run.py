@@ -2,12 +2,13 @@ import json
 import subprocess
 from pathlib import Path
 
-from now_sdk import Context, command, option
+from now_sdk import Context, command, mode, option
 
 EXAMPLE = "examples/example.py"
 
 
 @command("run")
+@mode("dev")
 @option("--debug", is_flag=True, help="Open in VS Code and start the debugger")
 @option("--profile", is_flag=True, help="Run with cProfile and print the top 20 calls")
 def run(ctx: Context) -> None:
