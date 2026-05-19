@@ -502,7 +502,7 @@ def _record_terminal_mp4(
 
 
 def _terminal_frames(events: list[tuple[float, str, str]], options: RecordingOptions) -> list[tuple[str, str | None]]:
-    keyboard_height = 150
+    keyboard_height = 240
     terminal_height = options.height - keyboard_height
     cols = max(20, (options.width - 64) // max(1, (6 * max(1, options.font_size // 8))))
     rows = max(5, (terminal_height - 64) // max(1, (9 * max(1, options.font_size // 8))))
@@ -512,8 +512,9 @@ def _terminal_frames(events: list[tuple[float, str, str]], options: RecordingOpt
         cleaned = _strip_ansi(text)
         if stream == "k":
             for char in cleaned:
+                key = _key_label(char)
                 state.write(char)
-                frames.append((state.render(cursor=True), _key_label(char)))
+                frames.extend([(state.render(cursor=True), key)] * _key_hold_frames(key))
         else:
             for chunk in _chunks(cleaned, 12):
                 state.write(chunk)
@@ -537,6 +538,12 @@ def _key_label(char: str) -> str:
     if char == " ":
         return "SPACE"
     return char.upper()
+
+
+def _key_hold_frames(key: str) -> int:
+    if key in {"ENTER", "BACKSPACE", "TAB", "SPACE"}:
+        return 8
+    return 4
 
 
 class TerminalScreen:
@@ -719,7 +726,7 @@ def _write_text_frame(
     scale = max(1, font_size // 8)
     char_width = 6 * scale
     line_height = 9 * scale
-    keyboard_height = 150 if show_keyboard else 0
+    keyboard_height = 240 if show_keyboard else 0
     terminal_height = height - keyboard_height
     max_cols = max(1, (width - 64) // char_width)
     max_lines = max(1, (terminal_height - 64) // line_height)
@@ -765,25 +772,29 @@ def _draw_keyboard(
     active_key: str | None,
     scale: int,
 ) -> None:
-    top = height - 132
+    top = height - 220
     panel = (18, 24, 42)
     border = (70, 80, 110)
     normal = (36, 43, 66)
     active = (250, 204, 21)
     text = (248, 248, 242)
     active_text = (11, 16, 32)
-    _fill_rect(pixels, width, height, 20, top - 16, width - 40, 128, panel)
-    _draw_rect(pixels, width, height, 20, top - 16, width - 40, 128, border)
+    _fill_rect(pixels, width, height, 20, top - 16, width - 40, 216, panel)
+    _draw_rect(pixels, width, height, 20, top - 16, width - 40, 216, border)
     _draw_text(pixels, width, height, 36, top - 2, "KEYBOARD", scale, text)
+    if active_key is not None:
+        _fill_rect(pixels, width, height, width - 290, top - 10, 250, 34, active)
+        _draw_rect(pixels, width, height, width - 290, top - 10, 250, 34, border)
+        _draw_text(pixels, width, height, width - 276, top, f"KEY {active_key}", max(1, scale - 1), active_text)
 
     rows = [
         ["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"],
         ["A", "S", "D", "F", "G", "H", "J", "K", "L", "ENTER"],
         ["Z", "X", "C", "V", "B", "N", "M", "SPACE", "BACKSPACE"],
     ]
-    key_h = 24
-    key_gap = 8
-    y = top + 24
+    key_h = 42
+    key_gap = 12
+    y = top + 52
     for row in rows:
         total_w = sum(_key_width(k) for k in row) + key_gap * (len(row) - 1)
         x = (width - total_w) // 2
@@ -801,7 +812,7 @@ def _draw_keyboard(
                 width,
                 height,
                 x + max(4, (key_w - label_w) // 2),
-                y + 7,
+                y + 14,
                 key,
                 label_scale,
                 active_text if is_active else text,
@@ -812,12 +823,12 @@ def _draw_keyboard(
 
 def _key_width(key: str) -> int:
     if key == "BACKSPACE":
-        return 132
-    if key == "ENTER":
-        return 92
-    if key == "SPACE":
         return 180
-    return 44
+    if key == "ENTER":
+        return 124
+    if key == "SPACE":
+        return 260
+    return 58
 
 
 def _fill_rect(
