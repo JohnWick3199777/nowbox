@@ -11,6 +11,7 @@ EXAMPLE = "examples/example.py"
 @option("--debug", is_flag=True, help="Open in VS Code and start the debugger")
 @option("--profile", is_flag=True, help="Run with cProfile and print the top 20 calls")
 def run(ctx: Context) -> None:
+    """Run the example script. Use --debug to launch in VS Code, --profile to profile."""
     debug = ctx.args["debug"]
     profile = ctx.args["profile"]
     script = ctx.project_root / EXAMPLE
