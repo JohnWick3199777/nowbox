@@ -41,6 +41,7 @@ Base sandbox properties:
 - `root`: default command working directory
 - `status`: lifecycle status
 - `created_at`: creation timestamp
+- `terminal`: PTY-backed terminal emulator
 
 Run results include:
 
@@ -62,6 +63,27 @@ result = sandbox.run(
     "python -c \"print('hello')\"",
     recording=RecordingOptions(path=sandbox.root / "artifacts" / "run.mp4"),
 )
+```
+
+## Terminal emulation
+
+Use `sandbox.terminal` for PTY-backed execution. This is the API shape intended for interactive shell flows and terminal recordings.
+
+```python
+sandbox.terminal.start_record(sandbox.root / "artifacts" / "terminal.mp4")
+result = sandbox.terminal.run("python -q -c \"print('hello from terminal')\"")
+recording_path = sandbox.terminal.stop_record()
+
+print(result.stdout)
+print(recording_path)
+```
+
+`start_recording()` / `stop_recording()` are also available. Use a `.cast` suffix to write asciinema JSONL instead of MP4:
+
+```python
+sandbox.terminal.start_recording(sandbox.root / "artifacts" / "terminal.cast")
+sandbox.terminal.run("python --version")
+sandbox.terminal.stop_recording()
 ```
 
 Run the example:
