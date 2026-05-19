@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from nowbox.recording import record_terminal_mp4, write_cast
 from nowbox.types import Command, RecordingOptions, SandboxResult
-from nowbox.utils import normalize_command
+from nowbox.utils import normalize_command, strip_ansi
 
 if TYPE_CHECKING:
     from nowbox.sandbox import LocalSandbox
@@ -75,6 +75,13 @@ class SandboxTerminal:
         for char in text:
             self._pending_text += char
             self._record("k", char)
+        self._pending_command = self._pending_text
+        return self
+
+    def paste(self, text: str) -> SandboxTerminal:
+        self._ensure_prompt()
+        self._pending_text += text
+        self._record("p", text)
         self._pending_command = self._pending_text
         return self
 
@@ -210,15 +217,17 @@ class SandboxTerminal:
             os.close(master_fd)
 
         duration = time.monotonic() - started
+        raw = "".join(chunks)
         result = SandboxResult(
             sandbox_id=self._sandbox.id,
             command=normalized,
             exit_code=exit_code,
-            stdout="".join(chunks),
+            stdout=raw,
             stderr="",
             duration_seconds=duration,
             cwd=working_dir,
             recording_path=self._recording_path,
+            output=strip_ansi(raw).strip(),
         )
         if check and not result.ok:
             raise subprocess.CalledProcessError(

@@ -15,7 +15,7 @@ class RecordingOptions:
     duration_seconds: float = 3.0
     width: int = 1280
     height: int = 720
-    font_size: int = 24
+    font_size: int = 14
 
 
 @dataclass(frozen=True)
@@ -28,6 +28,7 @@ class SandboxResult:
     duration_seconds: float
     cwd: Path | None = None
     recording_path: Path | None = None
+    output: str = ""
 
     @property
     def ok(self) -> bool:

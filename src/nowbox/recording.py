@@ -8,6 +8,9 @@ import textwrap
 import time
 from pathlib import Path
 
+from PIL import Image, ImageDraw
+from PIL import ImageFont as PILFont
+
 from nowbox.types import RecordingOptions
 from nowbox.utils import chunks, command_text, strip_ansi
 
@@ -95,7 +98,7 @@ def _write_text_mp4(*, text: str, path: Path, options: RecordingOptions) -> Path
         raise RuntimeError("MP4 recording requires ffmpeg on PATH")
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
-        frame_path = Path(tmp) / "frame.ppm"
+        frame_path = Path(tmp) / "frame.png"
         write_frame(text, frame_path, width=options.width, height=options.height, font_size=options.font_size)
         subprocess.run(
             [
@@ -137,7 +140,7 @@ def record_terminal_mp4(
     with tempfile.TemporaryDirectory() as tmp:
         frame_dir = Path(tmp)
         for index, (text, key) in enumerate(frames):
-            frame_path = frame_dir / f"frame-{index:04d}.ppm"
+            frame_path = frame_dir / f"frame-{index:04d}.png"
             write_frame(
                 text,
                 frame_path,
@@ -154,7 +157,7 @@ def record_terminal_mp4(
                 "-framerate",
                 "8",
                 "-i",
-                str(frame_dir / "frame-%04d.ppm"),
+                str(frame_dir / "frame-%04d.png"),
                 "-pix_fmt",
                 "yuv420p",
                 str(path),
@@ -174,13 +177,23 @@ def write_cast(path: Path, events: list[tuple[float, str, str]]) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+_TITLE_BAR_HEIGHT = 38
+
+
+_KEYBOARD_HEIGHT = 130
+
+
 def build_terminal_frames(
     events: list[tuple[float, str, str]], options: RecordingOptions
 ) -> list[tuple[str, str | None]]:
-    keyboard_height = 240
-    terminal_height = options.height - keyboard_height
-    cols = max(20, (options.width - 64) // max(1, 6 * max(1, options.font_size // 8)))
-    rows = max(5, (terminal_height - 64) // max(1, 9 * max(1, options.font_size // 8)))
+    font = _load_font(options.font_size)
+    char_w = max(1, int(font.getlength("M")))
+    ascent, descent = font.getmetrics()
+    line_height = max(1, ascent + descent + 2)
+    terminal_height = options.height - _KEYBOARD_HEIGHT - _TITLE_BAR_HEIGHT
+    pad_x, pad_y = 20, 14
+    cols = max(20, (options.width - pad_x * 2) // char_w)
+    rows = max(5, (terminal_height - pad_y * 2) // line_height)
     state = TerminalScreen(cols=cols, rows=rows)
     frames: list[tuple[str, str | None]] = [(state.render(cursor=True), None)]
     for _, stream, text in events:
@@ -190,6 +203,9 @@ def build_terminal_frames(
                 key = _key_label(char)
                 state.write(char)
                 frames.extend([(state.render(cursor=True), key)] * _key_hold_frames(key))
+        elif stream == "p":
+            state.write(cleaned)
+            frames.append((state.render(cursor=True), None))
         else:
             for chunk in chunks(cleaned, 12):
                 state.write(chunk)
@@ -216,17 +232,17 @@ def _key_label(char: str) -> str:
 
 
 def _key_hold_frames(key: str) -> int:
-    return 8 if key in {"ENTER", "BACKSPACE", "TAB", "SPACE"} else 4
+    return 2 if key in {"ENTER", "BACKSPACE", "TAB", "SPACE"} else 1
 
 
 def _key_width(key: str) -> int:
     if key == "BACKSPACE":
-        return 180
+        return 62
     if key == "ENTER":
-        return 124
+        return 50
     if key == "SPACE":
-        return 260
-    return 58
+        return 94
+    return 27
 
 
 # ---------------------------------------------------------------------------
@@ -269,74 +285,23 @@ class TerminalScreen:
 
 
 # ---------------------------------------------------------------------------
-# Pixel renderer
+# Image renderer (Pillow)
 # ---------------------------------------------------------------------------
 
+_MONO_FONT_PATHS = [
+    "/System/Library/Fonts/SFNSMono.ttf",
+    "/System/Library/Fonts/Menlo.ttc",
+    "/System/Library/Fonts/Monaco.ttf",
+]
 
-FONT_5X7: dict[str, tuple[str, ...]] = {
-    "A": ("01110", "10001", "10001", "11111", "10001", "10001", "10001"),
-    "B": ("11110", "10001", "10001", "11110", "10001", "10001", "11110"),
-    "C": ("01111", "10000", "10000", "10000", "10000", "10000", "01111"),
-    "D": ("11110", "10001", "10001", "10001", "10001", "10001", "11110"),
-    "E": ("11111", "10000", "10000", "11110", "10000", "10000", "11111"),
-    "F": ("11111", "10000", "10000", "11110", "10000", "10000", "10000"),
-    "G": ("01111", "10000", "10000", "10011", "10001", "10001", "01111"),
-    "H": ("10001", "10001", "10001", "11111", "10001", "10001", "10001"),
-    "I": ("11111", "00100", "00100", "00100", "00100", "00100", "11111"),
-    "J": ("00111", "00010", "00010", "00010", "00010", "10010", "01100"),
-    "K": ("10001", "10010", "10100", "11000", "10100", "10010", "10001"),
-    "L": ("10000", "10000", "10000", "10000", "10000", "10000", "11111"),
-    "M": ("10001", "11011", "10101", "10101", "10001", "10001", "10001"),
-    "N": ("10001", "11001", "10101", "10011", "10001", "10001", "10001"),
-    "O": ("01110", "10001", "10001", "10001", "10001", "10001", "01110"),
-    "P": ("11110", "10001", "10001", "11110", "10000", "10000", "10000"),
-    "Q": ("01110", "10001", "10001", "10001", "10101", "10010", "01101"),
-    "R": ("11110", "10001", "10001", "11110", "10100", "10010", "10001"),
-    "S": ("01111", "10000", "10000", "01110", "00001", "00001", "11110"),
-    "T": ("11111", "00100", "00100", "00100", "00100", "00100", "00100"),
-    "U": ("10001", "10001", "10001", "10001", "10001", "10001", "01110"),
-    "V": ("10001", "10001", "10001", "10001", "10001", "01010", "00100"),
-    "W": ("10001", "10001", "10001", "10101", "10101", "10101", "01010"),
-    "X": ("10001", "10001", "01010", "00100", "01010", "10001", "10001"),
-    "Y": ("10001", "10001", "01010", "00100", "00100", "00100", "00100"),
-    "Z": ("11111", "00001", "00010", "00100", "01000", "10000", "11111"),
-    "0": ("01110", "10001", "10011", "10101", "11001", "10001", "01110"),
-    "1": ("00100", "01100", "00100", "00100", "00100", "00100", "01110"),
-    "2": ("01110", "10001", "00001", "00010", "00100", "01000", "11111"),
-    "3": ("11110", "00001", "00001", "01110", "00001", "00001", "11110"),
-    "4": ("00010", "00110", "01010", "10010", "11111", "00010", "00010"),
-    "5": ("11111", "10000", "10000", "11110", "00001", "00001", "11110"),
-    "6": ("01110", "10000", "10000", "11110", "10001", "10001", "01110"),
-    "7": ("11111", "00001", "00010", "00100", "01000", "01000", "01000"),
-    "8": ("01110", "10001", "10001", "01110", "10001", "10001", "01110"),
-    "9": ("01110", "10001", "10001", "01111", "00001", "00001", "01110"),
-    ":": ("00000", "00100", "00100", "00000", "00100", "00100", "00000"),
-    ".": ("00000", "00000", "00000", "00000", "00000", "01100", "01100"),
-    "-": ("00000", "00000", "00000", "11111", "00000", "00000", "00000"),
-    "_": ("00000", "00000", "00000", "00000", "00000", "00000", "11111"),
-    "/": ("00001", "00010", "00010", "00100", "01000", "01000", "10000"),
-    "\\": ("10000", "01000", "01000", "00100", "00010", "00010", "00001"),
-    "(": ("00010", "00100", "01000", "01000", "01000", "00100", "00010"),
-    ")": ("01000", "00100", "00010", "00010", "00010", "00100", "01000"),
-    "<": ("00010", "00100", "01000", "10000", "01000", "00100", "00010"),
-    ">": ("01000", "00100", "00010", "00001", "00010", "00100", "01000"),
-    "'": ("00100", "00100", "00000", "00000", "00000", "00000", "00000"),
-    '"': ("01010", "01010", "00000", "00000", "00000", "00000", "00000"),
-    "=": ("00000", "11111", "00000", "11111", "00000", "00000", "00000"),
-    "$": ("00100", "01111", "10100", "01110", "00101", "11110", "00100"),
-    "#": ("01010", "11111", "01010", "01010", "11111", "01010", "00000"),
-    "|": ("00100", "00100", "00100", "00100", "00100", "00100", "00100"),
-    ";": ("00000", "00100", "00100", "00000", "00100", "00100", "01000"),
-    ",": ("00000", "00000", "00000", "00000", "00100", "00100", "01000"),
-    "?": ("01110", "10001", "00001", "00010", "00100", "00000", "00100"),
-    "!": ("00100", "00100", "00100", "00100", "00100", "00000", "00100"),
-    "*": ("00000", "10101", "01110", "11111", "01110", "10101", "00000"),
-    "&": ("01100", "10010", "10100", "01000", "10101", "10010", "01101"),
-    "+": ("00000", "00100", "00100", "11111", "00100", "00100", "00000"),
-    "[": ("01110", "01000", "01000", "01000", "01000", "01000", "01110"),
-    "]": ("01110", "00010", "00010", "00010", "00010", "00010", "01110"),
-    " ": ("00000", "00000", "00000", "00000", "00000", "00000", "00000"),
-}
+
+def _load_font(size: int) -> PILFont.FreeTypeFont:
+    for path in _MONO_FONT_PATHS:
+        try:
+            return PILFont.truetype(path, size)
+        except OSError:
+            continue
+    raise RuntimeError(f"No monospace font found; tried: {_MONO_FONT_PATHS}")
 
 
 def write_frame(
@@ -349,13 +314,17 @@ def write_frame(
     keyboard_key: str | None = None,
     show_keyboard: bool = False,
 ) -> None:
-    scale = max(1, font_size // 8)
-    char_width = 6 * scale
-    line_height = 9 * scale
-    keyboard_height = 240 if show_keyboard else 0
-    terminal_height = height - keyboard_height
-    max_cols = max(1, (width - 64) // char_width)
-    max_lines = max(1, (terminal_height - 64) // line_height)
+    font = _load_font(font_size)
+    ascent, descent = font.getmetrics()
+    line_height = ascent + descent + 2
+    char_w = int(font.getlength("M"))
+
+    keyboard_height = _KEYBOARD_HEIGHT if show_keyboard else 0
+    terminal_top = _TITLE_BAR_HEIGHT
+    terminal_height = height - keyboard_height - terminal_top
+    pad_x, pad_y = 20, 14
+    max_cols = max(1, (width - pad_x * 2) // max(1, char_w))
+    max_lines = max(1, (terminal_height - pad_y * 2) // max(1, line_height))
 
     lines: list[str] = []
     for raw_line in text.splitlines():
@@ -363,138 +332,86 @@ def write_frame(
         if len(lines) >= max_lines:
             break
 
-    background = (11, 16, 32)
-    foreground = (248, 248, 242)
-    pixels = bytearray(background * width * height)
+    img = Image.new("RGB", (width, height), (30, 30, 30))
+    draw = ImageDraw.Draw(img)
 
+    # Title bar
+    draw.rectangle([0, 0, width - 1, _TITLE_BAR_HEIGHT - 1], fill=(50, 50, 50))
+    draw.line([0, _TITLE_BAR_HEIGHT - 1, width - 1, _TITLE_BAR_HEIGHT - 1], fill=(28, 28, 28), width=1)
+
+    # Traffic lights
+    cy = _TITLE_BAR_HEIGHT // 2
+    r = 7
+    for cx, color in [(18, (255, 95, 86)), (38, (255, 189, 46)), (58, (39, 201, 63))]:
+        draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=color)
+
+    # Window title
+    title = "Terminal"
+    title_font = _load_font(max(10, font_size - 6))
+    title_w = int(title_font.getlength(title))
+    ta, td = title_font.getmetrics()
+    draw.text(
+        ((width - title_w) // 2, (_TITLE_BAR_HEIGHT - ta - td) // 2), title, font=title_font, fill=(160, 160, 160)
+    )
+
+    # Terminal text
     for row, line in enumerate(lines):
-        y = 32 + row * line_height
-        _draw_text(pixels, width, height, 32, y, line, scale, foreground)
+        y = terminal_top + pad_y + row * line_height
+        draw.text((pad_x, y), line, font=font, fill=(212, 212, 212))
 
     if show_keyboard:
-        _draw_keyboard(pixels, width, height, keyboard_key, scale)
+        _draw_keyboard(draw, width, height, keyboard_key, font_size)
 
-    path.write_bytes(f"P6\n{width} {height}\n255\n".encode() + bytes(pixels))
+    img.save(str(path))
 
 
 def _draw_keyboard(
-    pixels: bytearray,
+    draw: ImageDraw.ImageDraw,
     width: int,
     height: int,
     active_key: str | None,
-    scale: int,
+    font_size: int,
 ) -> None:
-    top = height - 220
-    panel = (18, 24, 42)
-    border = (70, 80, 110)
-    normal = (36, 43, 66)
-    active = (250, 204, 21)
-    text_color = (248, 248, 242)
-    active_text = (11, 16, 32)
-
-    _fill_rect(pixels, width, height, 20, top - 16, width - 40, 216, panel)
-    _draw_rect(pixels, width, height, 20, top - 16, width - 40, 216, border)
-    _draw_text(pixels, width, height, 36, top - 2, "KEYBOARD", scale, text_color)
-
-    if active_key is not None:
-        _fill_rect(pixels, width, height, width - 290, top - 10, 250, 34, active)
-        _draw_rect(pixels, width, height, width - 290, top - 10, 250, 34, border)
-        _draw_text(pixels, width, height, width - 276, top, f"KEY {active_key}", max(1, scale - 1), active_text)
-
     rows = [
         ["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"],
         ["A", "S", "D", "F", "G", "H", "J", "K", "L", "ENTER"],
         ["Z", "X", "C", "V", "B", "N", "M", "SPACE", "BACKSPACE"],
     ]
-    key_h = 42
-    key_gap = 12
-    y = top + 52
+    key_h = 24
+    key_gap = 4
+    pad = 10
+
+    panel_w = max(sum(_key_width(k) for k in row) + key_gap * (len(row) - 1) for row in rows) + pad * 2
+    panel_h = len(rows) * (key_h + key_gap) - key_gap + pad * 2
+    panel_x = width - panel_w - 16
+    panel_y = height - panel_h - 16
+
+    panel_bg = (40, 40, 40)
+    panel_border = (65, 65, 65)
+    normal = (58, 58, 58)
+    key_border = (78, 78, 78)
+    active_color = (250, 204, 21)
+    text_color = (195, 195, 195)
+    active_text = (20, 20, 20)
+
+    label_font = _load_font(max(7, font_size - 7))
+
+    draw.rectangle([panel_x, panel_y, panel_x + panel_w, panel_y + panel_h], fill=panel_bg, outline=panel_border)
+
+    y = panel_y + pad
     for row in rows:
-        total_w = sum(_key_width(k) for k in row) + key_gap * (len(row) - 1)
-        x = (width - total_w) // 2
+        row_w = sum(_key_width(k) for k in row) + key_gap * (len(row) - 1)
+        x = panel_x + (panel_w - row_w) // 2
         for key in row:
             key_w = _key_width(key)
             is_active = active_key == key or (
                 active_key is not None and len(active_key) == 1 and key == active_key.upper()
             )
-            bg = active if is_active else normal
+            bg = active_color if is_active else normal
             fg = active_text if is_active else text_color
-            _fill_rect(pixels, width, height, x, y, key_w, key_h, bg)
-            _draw_rect(pixels, width, height, x, y, key_w, key_h, border)
-            label_scale = max(1, scale - 1)
-            label_w = len(key) * 6 * label_scale
-            _draw_text(pixels, width, height, x + max(4, (key_w - label_w) // 2), y + 14, key, label_scale, fg)
+            draw.rectangle([x, y, x + key_w - 1, y + key_h - 1], fill=bg, outline=key_border)
+            label_w = int(label_font.getlength(key))
+            lh = sum(label_font.getmetrics())
+            draw.text((x + (key_w - label_w) // 2, y + (key_h - lh) // 2), key, font=label_font, fill=fg)
             x += key_w + key_gap
         y += key_h + key_gap
-
-
-def _draw_text(
-    pixels: bytearray,
-    width: int,
-    height: int,
-    x: int,
-    y: int,
-    text: str,
-    scale: int,
-    color: tuple[int, int, int],
-) -> None:
-    for col, char in enumerate(text):
-        _draw_char(pixels, width, height, x + col * 6 * scale, y, char, scale, color)
-
-
-def _draw_char(
-    pixels: bytearray,
-    width: int,
-    height: int,
-    x: int,
-    y: int,
-    char: str,
-    scale: int,
-    color: tuple[int, int, int],
-) -> None:
-    glyph = FONT_5X7.get(char) or FONT_5X7.get(char.upper(), FONT_5X7.get(" "))
-    if glyph is None:
-        return
-    for gy, row in enumerate(glyph):
-        for gx, bit in enumerate(row):
-            if bit != "1":
-                continue
-            for sy in range(scale):
-                for sx in range(scale):
-                    px = x + gx * scale + sx
-                    py = y + gy * scale + sy
-                    if 0 <= px < width and 0 <= py < height:
-                        offset = (py * width + px) * 3
-                        pixels[offset : offset + 3] = bytes(color)
-
-
-def _fill_rect(
-    pixels: bytearray,
-    width: int,
-    height: int,
-    x: int,
-    y: int,
-    rect_width: int,
-    rect_height: int,
-    color: tuple[int, int, int],
-) -> None:
-    for py in range(max(0, y), min(height, y + rect_height)):
-        for px in range(max(0, x), min(width, x + rect_width)):
-            offset = (py * width + px) * 3
-            pixels[offset : offset + 3] = bytes(color)
-
-
-def _draw_rect(
-    pixels: bytearray,
-    width: int,
-    height: int,
-    x: int,
-    y: int,
-    rect_width: int,
-    rect_height: int,
-    color: tuple[int, int, int],
-) -> None:
-    _fill_rect(pixels, width, height, x, y, rect_width, 1, color)
-    _fill_rect(pixels, width, height, x, y + rect_height - 1, rect_width, 1, color)
-    _fill_rect(pixels, width, height, x, y, 1, rect_height, color)
-    _fill_rect(pixels, width, height, x + rect_width - 1, y, 1, rect_height, color)

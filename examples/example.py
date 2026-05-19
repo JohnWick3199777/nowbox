@@ -1,19 +1,30 @@
 from nowbox import LocalSandbox as Sandbox
-from nowbox import RecordingOptions
 
 sandbox = Sandbox(name="example")
+terminal = sandbox.terminal
+terminal.start_record(sandbox.root / "artifacts" / "terminal.mp4")
 
-result = sandbox.run(
-    ["python", "-c", "print('hello from nowbox')"],
-    recording=RecordingOptions(path=sandbox.root / "artifacts" / "example.mp4"),
+terminal.type("python --version")
+result = terminal.enter()
+print(result.output)
+
+terminal.type('python -c "import platform; print(platform.platform())"')
+result = terminal.enter()
+print(result.output)
+
+terminal.paste("python -c \"import os; print(f'CPUs: {os.cpu_count()}')\"")
+result = terminal.enter()
+print(result.output)
+
+terminal.paste(
+    "python -c \"import shutil; t,u,f = shutil.disk_usage('/'); print(f'Disk: {t//1<<30}GB total, {f//1<<30}GB free')\""
 )
-print(result.stdout)
+result = terminal.enter()
+print(result.output)
 
-sandbox.terminal.start_record(sandbox.root / "artifacts" / "terminal.mp4")
-sandbox.terminal.type("python -q -c ")
-sandbox.terminal.type('"print(')
-sandbox.terminal.type("'hello from terminal'")
-sandbox.terminal.type(')"')
-terminal_result = sandbox.terminal.enter()
-sandbox.terminal.stop_record()
-print(terminal_result.stdout)
+terminal.type("python -c \"import sys; print(f'Python {sys.version}')\"")
+result = terminal.enter()
+print(result.output)
+
+terminal.stop_record()
+print(f"Recording saved to: {sandbox.root / 'artifacts' / 'terminal.mp4'}")
