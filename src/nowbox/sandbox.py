@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import pty
+import re
 import select
 import shlex
 import shutil
@@ -323,8 +324,7 @@ class SandboxTerminal:
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     def _write_mp4(self, path: Path) -> None:
-        text = "".join(self._transcript).strip() or "<empty terminal recording>"
-        _record_text_mp4(text=text, path=path, options=RecordingOptions(path=path))
+        _record_terminal_mp4(events=self._events, path=path, options=RecordingOptions(path=path))
 
 
 def _normalize_command(command: Command) -> list[str] | str:
@@ -368,6 +368,108 @@ def _record_mp4(
 
 def _command_text(command: list[str] | str) -> str:
     return command if isinstance(command, str) else shlex.join(command)
+
+
+def _record_terminal_mp4(
+    *,
+    events: list[tuple[float, str, str]],
+    path: Path,
+    options: RecordingOptions,
+) -> Path:
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        raise RuntimeError("MP4 recording requires ffmpeg on PATH")
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frames = _terminal_frames(events, options)
+    with tempfile.TemporaryDirectory() as tmp:
+        frame_dir = Path(tmp)
+        for index, text in enumerate(frames):
+            frame_path = frame_dir / f"frame-{index:04d}.ppm"
+            _write_text_frame(text, frame_path, width=options.width, height=options.height, font_size=options.font_size)
+        subprocess.run(
+            [
+                ffmpeg,
+                "-y",
+                "-framerate",
+                "8",
+                "-i",
+                str(frame_dir / "frame-%04d.ppm"),
+                "-pix_fmt",
+                "yuv420p",
+                str(path),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    return path
+
+
+def _terminal_frames(events: list[tuple[float, str, str]], options: RecordingOptions) -> list[str]:
+    cols = max(20, (options.width - 64) // max(1, (6 * max(1, options.font_size // 8))))
+    rows = max(5, (options.height - 64) // max(1, (9 * max(1, options.font_size // 8))))
+    state = TerminalScreen(cols=cols, rows=rows)
+    frames = [state.render(cursor=True)]
+    for _, stream, text in events:
+        cleaned = _strip_ansi(text)
+        if stream == "i":
+            for char in cleaned:
+                state.write(char)
+                frames.append(state.render(cursor=True))
+        else:
+            for chunk in _chunks(cleaned, 12):
+                state.write(chunk)
+                frames.append(state.render(cursor=True))
+    if len(frames) > 240:
+        step = max(1, len(frames) // 240)
+        frames = frames[::step]
+    if len(frames) == 1:
+        frames.append(frames[0])
+    frames.extend([frames[-1]] * 12)
+    return frames
+
+
+class TerminalScreen:
+    def __init__(self, *, cols: int, rows: int) -> None:
+        self.cols = cols
+        self.rows = rows
+        self.lines = [""]
+
+    def write(self, text: str) -> None:
+        for char in text:
+            if char == "\r":
+                continue
+            if char == "\n":
+                self.lines.append("")
+                continue
+            if char == "\b" or char == "\x7f":
+                self.lines[-1] = self.lines[-1][:-1]
+                continue
+            if char == "\t":
+                self.lines[-1] += "    "
+            elif char.isprintable():
+                self.lines[-1] += char
+            while len(self.lines[-1]) > self.cols:
+                overflow = self.lines[-1][self.cols :]
+                self.lines[-1] = self.lines[-1][: self.cols]
+                self.lines.append(overflow)
+            if len(self.lines) > self.rows:
+                self.lines = self.lines[-self.rows :]
+
+    def render(self, *, cursor: bool = False) -> str:
+        visible = self.lines[-self.rows :]
+        if cursor:
+            visible = [*visible[:-1], f"{visible[-1]}_"]
+        return "\n".join(visible)
+
+
+def _strip_ansi(text: str) -> str:
+    return re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
+
+
+def _chunks(text: str, size: int) -> list[str]:
+    return [text[index : index + size] for index in range(0, len(text), size)] or [""]
 
 
 def _record_text_mp4(*, text: str, path: Path, options: RecordingOptions) -> Path:
@@ -479,6 +581,15 @@ FONT_5X7 = {
     "'": ("00100", "00100", "00000", "00000", "00000", "00000", "00000"),
     '"': ("01010", "01010", "00000", "00000", "00000", "00000", "00000"),
     "=": ("00000", "11111", "00000", "11111", "00000", "00000", "00000"),
+    "$": ("00100", "01111", "10100", "01110", "00101", "11110", "00100"),
+    "#": ("01010", "11111", "01010", "01010", "11111", "01010", "00000"),
+    "|": ("00100", "00100", "00100", "00100", "00100", "00100", "00100"),
+    ";": ("00000", "00100", "00100", "00000", "00100", "00100", "01000"),
+    ",": ("00000", "00000", "00000", "00000", "00100", "00100", "01000"),
+    "?": ("01110", "10001", "00001", "00010", "00100", "00000", "00100"),
+    "!": ("00100", "00100", "00100", "00100", "00100", "00000", "00100"),
+    "*": ("00000", "10101", "01110", "11111", "01110", "10101", "00000"),
+    "&": ("01100", "10010", "10100", "01000", "10101", "10010", "01101"),
     "+": ("00000", "00100", "00100", "11111", "00100", "00100", "00000"),
     "[": ("01110", "01000", "01000", "01000", "01000", "01000", "01110"),
     "]": ("01110", "00010", "00010", "00010", "00010", "00010", "01110"),
@@ -493,7 +604,7 @@ def _write_text_frame(text: str, path: Path, *, width: int, height: int, font_si
     max_cols = max(1, (width - 64) // char_width)
     max_lines = max(1, (height - 64) // line_height)
     lines = []
-    for raw_line in text.upper().splitlines():
+    for raw_line in text.splitlines():
         line = raw_line[:max_cols]
         lines.append(line)
         if len(lines) >= max_lines:
@@ -522,7 +633,7 @@ def _draw_char(
     scale: int,
     color: tuple[int, int, int],
 ) -> None:
-    glyph = FONT_5X7.get(char, FONT_5X7.get(" "))
+    glyph = FONT_5X7.get(char) or FONT_5X7.get(char.upper(), FONT_5X7.get(" "))
     if glyph is None:
         return
     for gy, row in enumerate(glyph):

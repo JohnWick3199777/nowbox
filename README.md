@@ -67,7 +67,7 @@ result = sandbox.run(
 
 ## Terminal emulation
 
-Use `sandbox.terminal` for PTY-backed execution. This is the API shape intended for interactive shell flows and terminal recordings.
+Use `sandbox.terminal` for PTY-backed execution. This is the API shape intended for interactive shell flows and terminal recordings. MP4 terminal recordings are rendered progressively: the prompt and command appear as typed text, then output appears as the command runs.
 
 ```python
 sandbox.terminal.start_record(sandbox.root / "artifacts" / "terminal.mp4")
