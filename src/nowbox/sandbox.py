@@ -471,9 +471,17 @@ def _record_terminal_mp4(
     frames = _terminal_frames(events, options)
     with tempfile.TemporaryDirectory() as tmp:
         frame_dir = Path(tmp)
-        for index, text in enumerate(frames):
+        for index, (text, key) in enumerate(frames):
             frame_path = frame_dir / f"frame-{index:04d}.ppm"
-            _write_text_frame(text, frame_path, width=options.width, height=options.height, font_size=options.font_size)
+            _write_text_frame(
+                text,
+                frame_path,
+                width=options.width,
+                height=options.height,
+                font_size=options.font_size,
+                keyboard_key=key,
+                show_keyboard=True,
+            )
         subprocess.run(
             [
                 ffmpeg,
@@ -493,28 +501,42 @@ def _record_terminal_mp4(
     return path
 
 
-def _terminal_frames(events: list[tuple[float, str, str]], options: RecordingOptions) -> list[str]:
+def _terminal_frames(events: list[tuple[float, str, str]], options: RecordingOptions) -> list[tuple[str, str | None]]:
+    keyboard_height = 150
+    terminal_height = options.height - keyboard_height
     cols = max(20, (options.width - 64) // max(1, (6 * max(1, options.font_size // 8))))
-    rows = max(5, (options.height - 64) // max(1, (9 * max(1, options.font_size // 8))))
+    rows = max(5, (terminal_height - 64) // max(1, (9 * max(1, options.font_size // 8))))
     state = TerminalScreen(cols=cols, rows=rows)
-    frames = [state.render(cursor=True)]
+    frames: list[tuple[str, str | None]] = [(state.render(cursor=True), None)]
     for _, stream, text in events:
         cleaned = _strip_ansi(text)
         if stream == "k":
             for char in cleaned:
                 state.write(char)
-                frames.append(state.render(cursor=True))
+                frames.append((state.render(cursor=True), _key_label(char)))
         else:
             for chunk in _chunks(cleaned, 12):
                 state.write(chunk)
-                frames.append(state.render(cursor=True))
+                frames.append((state.render(cursor=True), None))
     if len(frames) > 240:
         step = max(1, len(frames) // 240)
         frames = frames[::step]
     if len(frames) == 1:
         frames.append(frames[0])
-    frames.extend([frames[-1]] * 12)
+    frames.extend([(frames[-1][0], None)] * 12)
     return frames
+
+
+def _key_label(char: str) -> str:
+    if char == "\n":
+        return "ENTER"
+    if char == "\t":
+        return "TAB"
+    if char in {"\b", "\x7f"}:
+        return "BACKSPACE"
+    if char == " ":
+        return "SPACE"
+    return char.upper()
 
 
 class TerminalScreen:
@@ -684,12 +706,23 @@ FONT_5X7 = {
 }
 
 
-def _write_text_frame(text: str, path: Path, *, width: int, height: int, font_size: int) -> None:
+def _write_text_frame(
+    text: str,
+    path: Path,
+    *,
+    width: int,
+    height: int,
+    font_size: int,
+    keyboard_key: str | None = None,
+    show_keyboard: bool = False,
+) -> None:
     scale = max(1, font_size // 8)
     char_width = 6 * scale
     line_height = 9 * scale
+    keyboard_height = 150 if show_keyboard else 0
+    terminal_height = height - keyboard_height
     max_cols = max(1, (width - 64) // char_width)
-    max_lines = max(1, (height - 64) // line_height)
+    max_lines = max(1, (terminal_height - 64) // line_height)
     lines = []
     for raw_line in text.splitlines():
         line = raw_line[:max_cols]
@@ -703,11 +736,120 @@ def _write_text_frame(text: str, path: Path, *, width: int, height: int, font_si
 
     for row, line in enumerate(lines):
         y = 32 + row * line_height
-        for col, char in enumerate(line):
-            x = 32 + col * char_width
-            _draw_char(pixels, width, height, x, y, char, scale, foreground)
+        _draw_text(pixels, width, height, 32, y, line, scale, foreground)
+
+    if show_keyboard:
+        _draw_keyboard(pixels, width, height, keyboard_key, scale)
 
     path.write_bytes(f"P6\n{width} {height}\n255\n".encode() + bytes(pixels))
+
+
+def _draw_text(
+    pixels: bytearray,
+    width: int,
+    height: int,
+    x: int,
+    y: int,
+    text: str,
+    scale: int,
+    color: tuple[int, int, int],
+) -> None:
+    for col, char in enumerate(text):
+        _draw_char(pixels, width, height, x + col * 6 * scale, y, char, scale, color)
+
+
+def _draw_keyboard(
+    pixels: bytearray,
+    width: int,
+    height: int,
+    active_key: str | None,
+    scale: int,
+) -> None:
+    top = height - 132
+    panel = (18, 24, 42)
+    border = (70, 80, 110)
+    normal = (36, 43, 66)
+    active = (250, 204, 21)
+    text = (248, 248, 242)
+    active_text = (11, 16, 32)
+    _fill_rect(pixels, width, height, 20, top - 16, width - 40, 128, panel)
+    _draw_rect(pixels, width, height, 20, top - 16, width - 40, 128, border)
+    _draw_text(pixels, width, height, 36, top - 2, "KEYBOARD", scale, text)
+
+    rows = [
+        ["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"],
+        ["A", "S", "D", "F", "G", "H", "J", "K", "L", "ENTER"],
+        ["Z", "X", "C", "V", "B", "N", "M", "SPACE", "BACKSPACE"],
+    ]
+    key_h = 24
+    key_gap = 8
+    y = top + 24
+    for row in rows:
+        total_w = sum(_key_width(k) for k in row) + key_gap * (len(row) - 1)
+        x = (width - total_w) // 2
+        for key in row:
+            key_w = _key_width(key)
+            is_active = active_key == key or (
+                active_key is not None and len(active_key) == 1 and key == active_key.upper()
+            )
+            _fill_rect(pixels, width, height, x, y, key_w, key_h, active if is_active else normal)
+            _draw_rect(pixels, width, height, x, y, key_w, key_h, border)
+            label_scale = max(1, scale - 1)
+            label_w = len(key) * 6 * label_scale
+            _draw_text(
+                pixels,
+                width,
+                height,
+                x + max(4, (key_w - label_w) // 2),
+                y + 7,
+                key,
+                label_scale,
+                active_text if is_active else text,
+            )
+            x += key_w + key_gap
+        y += key_h + key_gap
+
+
+def _key_width(key: str) -> int:
+    if key == "BACKSPACE":
+        return 132
+    if key == "ENTER":
+        return 92
+    if key == "SPACE":
+        return 180
+    return 44
+
+
+def _fill_rect(
+    pixels: bytearray,
+    width: int,
+    height: int,
+    x: int,
+    y: int,
+    rect_width: int,
+    rect_height: int,
+    color: tuple[int, int, int],
+) -> None:
+    for py in range(max(0, y), min(height, y + rect_height)):
+        for px in range(max(0, x), min(width, x + rect_width)):
+            offset = (py * width + px) * 3
+            pixels[offset : offset + 3] = bytes(color)
+
+
+def _draw_rect(
+    pixels: bytearray,
+    width: int,
+    height: int,
+    x: int,
+    y: int,
+    rect_width: int,
+    rect_height: int,
+    color: tuple[int, int, int],
+) -> None:
+    _fill_rect(pixels, width, height, x, y, rect_width, 1, color)
+    _fill_rect(pixels, width, height, x, y + rect_height - 1, rect_width, 1, color)
+    _fill_rect(pixels, width, height, x, y, 1, rect_height, color)
+    _fill_rect(pixels, width, height, x + rect_width - 1, y, 1, rect_height, color)
 
 
 def _draw_char(
