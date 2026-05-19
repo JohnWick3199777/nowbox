@@ -17,11 +17,14 @@ def run(ctx: Context) -> None:
     script = ctx.project_root / EXAMPLE
 
     if debug:
+        ctx.log.info(f"opening {EXAMPLE} in VS Code debugger")
         _launch_vscode_debug(ctx, script)
     elif profile:
-        ctx.run(f"uv run python -m cProfile -s cumulative {script} 2>&1 | head -30", exit=False)
+        ctx.log.info(f"profiling {EXAMPLE}")
+        ctx.run(f"uv run -m cProfile -s cumulative {script} 2>&1 | head -30", exit=False)
     else:
-        ctx.run(f"uv run python {script}")
+        ctx.log.info(f"running {EXAMPLE}")
+        ctx.run(f"uv run {script}")
 
 
 def _launch_vscode_debug(ctx: Context, script: Path) -> None:
