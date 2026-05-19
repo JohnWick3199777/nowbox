@@ -196,6 +196,9 @@ class SandboxTerminal:
         self._recording_started_at: float | None = None
         self._events: list[tuple[float, str, str]] = []
         self._transcript: list[str] = []
+        self._line_started = False
+        self._pending_text = ""
+        self._pending_command: list[str] | str | None = None
 
     @property
     def is_recording(self) -> bool:
@@ -206,6 +209,9 @@ class SandboxTerminal:
         self._recording_started_at = time.monotonic()
         self._events.clear()
         self._transcript.clear()
+        self._line_started = False
+        self._pending_text = ""
+        self._pending_command = None
         return self._recording_path
 
     def start_record(self, path: str | os.PathLike[str] | None = None) -> Path:
@@ -220,9 +226,90 @@ class SandboxTerminal:
         check: bool = False,
     ) -> SandboxResult:
         normalized = _normalize_command(command)
+        return self._type_command(normalized).enter(cwd=cwd, env=env, check=check)
+
+    def type(self, text: str) -> SandboxTerminal:
+        self._ensure_prompt()
+        for char in text:
+            self._pending_text += char
+            self._record("k", char)
+        self._pending_command = self._pending_text
+        return self
+
+    def key(
+        self,
+        key: str,
+        *,
+        cwd: str | os.PathLike[str] | None = None,
+        env: Mapping[str, str] | None = None,
+        check: bool = False,
+    ) -> SandboxTerminal | SandboxResult:
+        normalized = key.lower()
+        if normalized in {"enter", "return"}:
+            return self.enter(cwd=cwd, env=env, check=check)
+        if normalized in {"backspace", "delete"}:
+            if self._pending_text:
+                self._pending_text = self._pending_text[:-1]
+                self._pending_command = self._pending_text
+                self._record("k", "\b")
+            return self
+        if normalized == "tab":
+            self._pending_text += "\t"
+            self._pending_command = self._pending_text
+            self._record("k", "\t")
+            return self
+        if len(key) == 1:
+            return self.type(key)
+        raise ValueError(f"unknown key: {key}")
+
+    def enter(
+        self,
+        *,
+        cwd: str | os.PathLike[str] | None = None,
+        env: Mapping[str, str] | None = None,
+        check: bool = False,
+    ) -> SandboxResult:
+        command = self._pending_command if self._pending_command is not None else self._pending_text
+        if not command:
+            self._ensure_prompt()
+            self._record("k", "\n")
+            self._line_started = False
+            return SandboxResult(
+                sandbox_id=self._sandbox.id,
+                command="",
+                exit_code=0,
+                stdout="",
+                stderr="",
+                duration_seconds=0,
+                cwd=Path(cwd) if cwd is not None else self._sandbox.root,
+                recording_path=self._recording_path,
+            )
+        self._record("k", "\n")
+        self._line_started = False
+        self._pending_text = ""
+        self._pending_command = None
+        return self._execute(command, cwd=cwd, env=env, check=check)
+
+    def _type_command(self, command: list[str] | str) -> SandboxTerminal:
+        self._pending_command = command
+        return self.type(_command_text(command))
+
+    def _ensure_prompt(self) -> None:
+        if not self._line_started:
+            self._record("o", "$ ")
+            self._line_started = True
+
+    def _execute(
+        self,
+        command: list[str] | str,
+        *,
+        cwd: str | os.PathLike[str] | None = None,
+        env: Mapping[str, str] | None = None,
+        check: bool = False,
+    ) -> SandboxResult:
+        normalized = _normalize_command(command)
         working_dir = Path(cwd) if cwd is not None else self._sandbox.root
         started = time.monotonic()
-        self._record("i", f"$ {_command_text(normalized)}\n")
         master_fd, slave_fd = pty.openpty()
         try:
             proc = subprocess.Popen(
@@ -413,7 +500,7 @@ def _terminal_frames(events: list[tuple[float, str, str]], options: RecordingOpt
     frames = [state.render(cursor=True)]
     for _, stream, text in events:
         cleaned = _strip_ansi(text)
-        if stream == "i":
+        if stream == "k":
             for char in cleaned:
                 state.write(char)
                 frames.append(state.render(cursor=True))

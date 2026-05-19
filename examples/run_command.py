@@ -8,7 +8,11 @@ result = sandbox.run(
 )
 
 terminal_recording = sandbox.terminal.start_record(sandbox.root / "artifacts" / "terminal.mp4")
-terminal_result = sandbox.terminal.run("python -q -c \"print('hello from terminal')\"")
+sandbox.terminal.type("python -q -c ")
+sandbox.terminal.type('"print(')
+sandbox.terminal.type("'hello from terminal'")
+sandbox.terminal.type(')"')
+terminal_result = sandbox.terminal.key("enter")
 sandbox.terminal.stop_record()
 
 print(f"sandbox id: {sandbox.id}")

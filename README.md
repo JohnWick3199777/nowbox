@@ -67,11 +67,15 @@ result = sandbox.run(
 
 ## Terminal emulation
 
-Use `sandbox.terminal` for PTY-backed execution. This is the API shape intended for interactive shell flows and terminal recordings. MP4 terminal recordings are rendered progressively: the prompt and command appear as typed text, then output appears as the command runs.
+Use `sandbox.terminal` for PTY-backed execution. This is the API shape intended for interactive shell flows and terminal recordings. MP4 terminal recordings are rendered progressively: keypresses appear as typed text, nothing executes until `enter`, then output appears as the command runs.
 
 ```python
 sandbox.terminal.start_record(sandbox.root / "artifacts" / "terminal.mp4")
-result = sandbox.terminal.run("python -q -c \"print('hello from terminal')\"")
+sandbox.terminal.type("python -q -c ")
+sandbox.terminal.type('"print(')
+sandbox.terminal.type("'hello from terminal'")
+sandbox.terminal.type(')"')
+result = sandbox.terminal.key("enter")
 recording_path = sandbox.terminal.stop_record()
 
 print(result.stdout)
