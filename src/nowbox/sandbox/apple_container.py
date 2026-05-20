@@ -24,14 +24,7 @@ class AppleContainerSandbox(Sandbox):
             result = sb.run(["python", "--version"])
     """
 
-    def __init__(
-        self,
-        image: str,
-        *,
-        name: str | None = None,
-        root: str | os.PathLike[str] = "/",
-        id: str | None = None,
-    ) -> None:
+    def __init__(self, image: str, *, name: str | None = None, root: str | os.PathLike[str] = "/", id: str | None = None) -> None:
         self._image = image
         self._name = name or f"nowbox-{uuid.uuid4().hex[:12]}"
         self._root = Path(root)
@@ -45,16 +38,7 @@ class AppleContainerSandbox(Sandbox):
     def start(self) -> None:
         """Pull the image and start a detached container."""
         subprocess.run(
-            [
-                "container", "run",
-                "--name", self._name,
-                "--detach",
-                self._image,
-                "--", "sleep", "infinity",
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
+            ["container", "run", "--name", self._name, "--detach", self._image, "--", "sleep", "infinity"], check=True, capture_output=True, text=True
         )
         self._status = "running"
 
@@ -102,22 +86,13 @@ class AppleContainerSandbox(Sandbox):
         return self._terminal
 
     def run(
-        self,
-        command: Command,
-        *,
-        cwd: str | os.PathLike[str] | None = None,
-        env: Mapping[str, str] | None = None,
-        check: bool = False,
+        self, command: Command, *, cwd: str | os.PathLike[str] | None = None, env: Mapping[str, str] | None = None, check: bool = False
     ) -> SandboxResult:
         normalized = normalize_command(command)
         working_dir = Path(cwd) if cwd is not None else self.root
         exec_cmd = self._container_exec_cmd(normalized, working_dir, env)
         started = time.monotonic()
-        completed = subprocess.run(
-            exec_cmd,
-            capture_output=True,
-            text=True,
-        )
+        completed = subprocess.run(exec_cmd, capture_output=True, text=True)
         duration = time.monotonic() - started
         result = SandboxResult(
             sandbox_id=self.id,
@@ -129,19 +104,12 @@ class AppleContainerSandbox(Sandbox):
             cwd=working_dir,
         )
         if check and not result.ok:
-            raise subprocess.CalledProcessError(
-                result.exit_code, result.command, output=result.stdout, stderr=result.stderr
-            )
+            raise subprocess.CalledProcessError(result.exit_code, result.command, output=result.stdout, stderr=result.stderr)
         return result
 
     # --- internal helpers ---
 
-    def _container_exec_cmd(
-        self,
-        command: list[str] | str,
-        cwd: Path,
-        env: Mapping[str, str] | None = None,
-    ) -> list[str]:
+    def _container_exec_cmd(self, command: list[str] | str, cwd: Path, env: Mapping[str, str] | None = None) -> list[str]:
         args: list[str] = ["container", "exec", "--workdir", str(cwd)]
         if env:
             for k, v in env.items():
@@ -153,9 +121,5 @@ class AppleContainerSandbox(Sandbox):
             args += ["sh", "-c", command]
         return args
 
-    def _build_exec(
-        self,
-        command: list[str] | str,
-        cwd: Path,
-    ) -> tuple[list[str] | str, Path]:
+    def _build_exec(self, command: list[str] | str, cwd: Path) -> tuple[list[str] | str, Path]:
         return self._container_exec_cmd(command, cwd), Path.home()

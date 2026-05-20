@@ -50,20 +50,11 @@ class Sandbox(ABC):
 
     @abstractmethod
     def run(
-        self,
-        command: Command,
-        *,
-        cwd: str | os.PathLike[str] | None = None,
-        env: Mapping[str, str] | None = None,
-        check: bool = False,
+        self, command: Command, *, cwd: str | os.PathLike[str] | None = None, env: Mapping[str, str] | None = None, check: bool = False
     ) -> SandboxResult:
         """Run a command in the sandbox and return its captured result."""
 
-    def _build_exec(
-        self,
-        command: list[str] | str,
-        cwd: Path,
-    ) -> tuple[list[str] | str, Path]:
+    def _build_exec(self, command: list[str] | str, cwd: Path) -> tuple[list[str] | str, Path]:
         """Return (exec_command, host_cwd) for PTY execution.
 
         Subclasses override this to wrap the command for their backend

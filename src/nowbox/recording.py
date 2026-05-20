@@ -101,19 +101,7 @@ def _write_text_mp4(*, text: str, path: Path, options: RecordingOptions) -> Path
         frame_path = Path(tmp) / "frame.png"
         write_frame(text, frame_path, width=options.width, height=options.height, font_size=options.font_size)
         subprocess.run(
-            [
-                ffmpeg,
-                "-y",
-                "-loop",
-                "1",
-                "-i",
-                str(frame_path),
-                "-t",
-                str(options.duration_seconds),
-                "-pix_fmt",
-                "yuv420p",
-                str(path),
-            ],
+            [ffmpeg, "-y", "-loop", "1", "-i", str(frame_path), "-t", str(options.duration_seconds), "-pix_fmt", "yuv420p", str(path)],
             check=True,
             capture_output=True,
             text=True,
@@ -126,12 +114,7 @@ def _write_text_mp4(*, text: str, path: Path, options: RecordingOptions) -> Path
 # ---------------------------------------------------------------------------
 
 
-def record_terminal_mp4(
-    *,
-    events: list[tuple[float, str, str]],
-    path: Path,
-    options: RecordingOptions,
-) -> Path:
+def record_terminal_mp4(*, events: list[tuple[float, str, str]], path: Path, options: RecordingOptions) -> Path:
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg is None:
         raise RuntimeError("MP4 recording requires ffmpeg on PATH")
@@ -142,26 +125,10 @@ def record_terminal_mp4(
         for index, (text, key) in enumerate(frames):
             frame_path = frame_dir / f"frame-{index:04d}.png"
             write_frame(
-                text,
-                frame_path,
-                width=options.width,
-                height=options.height,
-                font_size=options.font_size,
-                keyboard_key=key,
-                show_keyboard=True,
+                text, frame_path, width=options.width, height=options.height, font_size=options.font_size, keyboard_key=key, show_keyboard=True
             )
         subprocess.run(
-            [
-                ffmpeg,
-                "-y",
-                "-framerate",
-                "8",
-                "-i",
-                str(frame_dir / "frame-%04d.png"),
-                "-pix_fmt",
-                "yuv420p",
-                str(path),
-            ],
+            [ffmpeg, "-y", "-framerate", "8", "-i", str(frame_dir / "frame-%04d.png"), "-pix_fmt", "yuv420p", str(path)],
             check=True,
             capture_output=True,
             text=True,
@@ -183,9 +150,7 @@ _TITLE_BAR_HEIGHT = 38
 _KEYBOARD_HEIGHT = 130
 
 
-def build_terminal_frames(
-    events: list[tuple[float, str, str]], options: RecordingOptions
-) -> list[tuple[str, str | None]]:
+def build_terminal_frames(events: list[tuple[float, str, str]], options: RecordingOptions) -> list[tuple[str, str | None]]:
     font = _load_font(options.font_size)
     char_w = max(1, int(font.getlength("M")))
     ascent, descent = font.getmetrics()
@@ -288,11 +253,7 @@ class TerminalScreen:
 # Image renderer (Pillow)
 # ---------------------------------------------------------------------------
 
-_MONO_FONT_PATHS = [
-    "/System/Library/Fonts/SFNSMono.ttf",
-    "/System/Library/Fonts/Menlo.ttc",
-    "/System/Library/Fonts/Monaco.ttf",
-]
+_MONO_FONT_PATHS = ["/System/Library/Fonts/SFNSMono.ttf", "/System/Library/Fonts/Menlo.ttc", "/System/Library/Fonts/Monaco.ttf"]
 
 
 def _load_font(size: int) -> PILFont.FreeTypeFont:
@@ -305,14 +266,7 @@ def _load_font(size: int) -> PILFont.FreeTypeFont:
 
 
 def write_frame(
-    text: str,
-    path: Path,
-    *,
-    width: int,
-    height: int,
-    font_size: int,
-    keyboard_key: str | None = None,
-    show_keyboard: bool = False,
+    text: str, path: Path, *, width: int, height: int, font_size: int, keyboard_key: str | None = None, show_keyboard: bool = False
 ) -> None:
     font = _load_font(font_size)
     ascent, descent = font.getmetrics()
@@ -350,9 +304,7 @@ def write_frame(
     title_font = _load_font(max(10, font_size - 6))
     title_w = int(title_font.getlength(title))
     ta, td = title_font.getmetrics()
-    draw.text(
-        ((width - title_w) // 2, (_TITLE_BAR_HEIGHT - ta - td) // 2), title, font=title_font, fill=(160, 160, 160)
-    )
+    draw.text(((width - title_w) // 2, (_TITLE_BAR_HEIGHT - ta - td) // 2), title, font=title_font, fill=(160, 160, 160))
 
     # Terminal text
     for row, line in enumerate(lines):
@@ -365,13 +317,7 @@ def write_frame(
     img.save(str(path))
 
 
-def _draw_keyboard(
-    draw: ImageDraw.ImageDraw,
-    width: int,
-    height: int,
-    active_key: str | None,
-    font_size: int,
-) -> None:
+def _draw_keyboard(draw: ImageDraw.ImageDraw, width: int, height: int, active_key: str | None, font_size: int) -> None:
     rows = [
         ["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"],
         ["A", "S", "D", "F", "G", "H", "J", "K", "L", "ENTER"],
@@ -404,9 +350,7 @@ def _draw_keyboard(
         x = panel_x + (panel_w - row_w) // 2
         for key in row:
             key_w = _key_width(key)
-            is_active = active_key == key or (
-                active_key is not None and len(active_key) == 1 and key == active_key.upper()
-            )
+            is_active = active_key == key or (active_key is not None and len(active_key) == 1 and key == active_key.upper())
             bg = active_color if is_active else normal
             fg = active_text if is_active else text_color
             draw.rectangle([x, y, x + key_w - 1, y + key_h - 1], fill=bg, outline=key_border)

@@ -16,11 +16,17 @@ requires = ["uv_build>=0.8.0,<0.9.0"]
 build-backend = "uv_build"
 
 [tool.ruff]
-line-length = 120
+line-length = 150
 target-version = "py311"
+
+[tool.ruff.format]
+skip-magic-trailing-comma = true
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.isort]
+split-on-trailing-comma = false
 
 [tool.ty.environment]
 extra-paths = ["src"]

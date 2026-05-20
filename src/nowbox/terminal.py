@@ -60,12 +60,7 @@ class SandboxTerminal:
         return self.stop_recording()
 
     def run(
-        self,
-        command: Command,
-        *,
-        cwd: str | os.PathLike[str] | None = None,
-        env: dict[str, str] | None = None,
-        check: bool = False,
+        self, command: Command, *, cwd: str | os.PathLike[str] | None = None, env: dict[str, str] | None = None, check: bool = False
     ) -> SandboxResult:
         normalized = normalize_command(command)
         return self._type_command(normalized).enter(cwd=cwd, env=env, check=check)
@@ -86,12 +81,7 @@ class SandboxTerminal:
         return self
 
     def key(
-        self,
-        key: str,
-        *,
-        cwd: str | os.PathLike[str] | None = None,
-        env: dict[str, str] | None = None,
-        check: bool = False,
+        self, key: str, *, cwd: str | os.PathLike[str] | None = None, env: dict[str, str] | None = None, check: bool = False
     ) -> SandboxTerminal | SandboxResult:
         normalized = key.lower()
         if normalized in {"enter", "return"}:
@@ -111,13 +101,7 @@ class SandboxTerminal:
             return self.type(key)
         raise ValueError(f"unknown key: {key}")
 
-    def enter(
-        self,
-        *,
-        cwd: str | os.PathLike[str] | None = None,
-        env: dict[str, str] | None = None,
-        check: bool = False,
-    ) -> SandboxResult:
+    def enter(self, *, cwd: str | os.PathLike[str] | None = None, env: dict[str, str] | None = None, check: bool = False) -> SandboxResult:
         command = self._pending_command if self._pending_command is not None else self._pending_text
         if not command:
             self._ensure_prompt()
@@ -158,12 +142,7 @@ class SandboxTerminal:
         self._transcript.append(text)
 
     def _execute(
-        self,
-        command: list[str] | str,
-        *,
-        cwd: str | os.PathLike[str] | None = None,
-        env: dict[str, str] | None = None,
-        check: bool = False,
+        self, command: list[str] | str, *, cwd: str | os.PathLike[str] | None = None, env: dict[str, str] | None = None, check: bool = False
     ) -> SandboxResult:
         normalized = normalize_command(command)
         working_dir = Path(cwd) if cwd is not None else self._sandbox.root
@@ -231,7 +210,5 @@ class SandboxTerminal:
             output=strip_ansi(raw).strip(),
         )
         if check and not result.ok:
-            raise subprocess.CalledProcessError(
-                result.exit_code, result.command, output=result.stdout, stderr=result.stderr
-            )
+            raise subprocess.CalledProcessError(result.exit_code, result.command, output=result.stdout, stderr=result.stderr)
         return result
