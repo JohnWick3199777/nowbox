@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import os
 import pty
+import re
 import select
+import shlex
 import subprocess
 import time
 from datetime import datetime, timezone
@@ -15,6 +17,21 @@ from nowbox.utils import normalize_command, strip_ansi
 
 if TYPE_CHECKING:
     from nowbox.sandbox.base import Sandbox
+
+# ---------------------------------------------------------------------------
+# PTY sentinel — printed by PROMPT_COMMAND so it never appears in command echo
+# Format: NOWBOX_READY:<exit_code>:<cwd>
+# ---------------------------------------------------------------------------
+_SENTINEL_PREFIX = "NOWBOX_READY:"
+_SENTINEL_RE = re.compile(r"NOWBOX_READY:(\d+):([^\r\n]*)")
+_BASH_SETUP = (
+    "stty -echo\n"
+    r"""export PROMPT_COMMAND='printf "NOWBOX_READY:$?:$PWD\n"'""" + "\n"
+    "export PS1=''\n"
+    "bind 'set enable-bracketed-paste off' 2>/dev/null || true\n"
+    # Echo stays OFF — we record keystrokes via _record(); PTY echo is redundant
+    # and causes long commands to bleed into output when they wrap.
+)
 
 
 class SandboxTerminal:
@@ -30,17 +47,110 @@ class SandboxTerminal:
         self._pending_text = ""
         self._pending_command: list[str] | str | None = None
         self._current_cwd: Path | None = None
+        # persistent PTY
+        self._pty_master: int = -1
+        self._pty_proc: subprocess.Popen[bytes] | None = None
 
-    @property
-    def _effective_cwd(self) -> Path:
-        return self._current_cwd if self._current_cwd is not None else self._sandbox.root
+    # ------------------------------------------------------------------
+    # PTY lifecycle
+    # ------------------------------------------------------------------
 
-    def _cwd_label(self) -> str:
-        cwd = self._effective_cwd
+    def _ensure_pty(self) -> None:
+        if self._pty_master >= 0:
+            return
+        cmd = self._sandbox._build_shell_cmd()
+        master_fd, slave_fd = pty.openpty()
+        self._pty_proc = subprocess.Popen(
+            cmd, stdin=slave_fd, stdout=slave_fd, stderr=slave_fd, text=False, close_fds=True
+        )
+        os.close(slave_fd)
+        self._pty_master = master_fd
+        # Configure bash: silent sentinel via PROMPT_COMMAND, blank PS1
+        self._pty_send("stty -echo\n")
+        time.sleep(0.05)
+        self._pty_drain(timeout=0.2)
+        self._pty_send(_BASH_SETUP)
+        # Trigger one empty command to flush the first sentinel
+        self._pty_send("\n")
+        raw = self._pty_read_until_sentinel(timeout=8)
+        self._pty_drain(timeout=0.1)
+        m = _SENTINEL_RE.search(raw)
+        if m:
+            self._current_cwd = Path(m.group(2)) if m.group(2) else self._sandbox.root
+
+    def close(self) -> None:
+        """Close the persistent PTY session."""
+        if self._pty_master >= 0:
+            try:
+                os.write(self._pty_master, b"exit\n")
+            except OSError:
+                pass
+            time.sleep(0.05)
+            try:
+                os.close(self._pty_master)
+            except OSError:
+                pass
+            self._pty_master = -1
+        if self._pty_proc is not None:
+            self._pty_proc.wait()
+            self._pty_proc = None
+
+    def __del__(self) -> None:
         try:
-            return "~/" + str(cwd.relative_to(Path.home())).lstrip(".")
-        except ValueError:
-            return str(cwd)
+            self.close()
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # PTY I/O helpers
+    # ------------------------------------------------------------------
+
+    def _pty_send(self, text: str) -> None:
+        os.write(self._pty_master, text.encode())
+
+    def _pty_drain(self, *, timeout: float) -> str:
+        chunks: list[str] = []
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            readable, _, _ = select.select([self._pty_master], [], [], min(remaining, 0.05))
+            if self._pty_master not in readable:
+                if chunks:
+                    break
+                continue
+            try:
+                data = os.read(self._pty_master, 4096)
+            except OSError:
+                break
+            if not data:
+                break
+            chunks.append(data.decode(errors="replace"))
+        return "".join(chunks)
+
+    def _pty_read_until_sentinel(self, *, timeout: float) -> str:
+        buf = ""
+        deadline = time.monotonic() + timeout
+        while _SENTINEL_PREFIX not in buf:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            readable, _, _ = select.select([self._pty_master], [], [], min(remaining, 0.1))
+            if self._pty_master not in readable:
+                continue
+            try:
+                data = os.read(self._pty_master, 4096)
+            except OSError:
+                break
+            if not data:
+                break
+            buf += data.decode(errors="replace")
+        return buf
+
+    # ------------------------------------------------------------------
+    # Recording lifecycle
+    # ------------------------------------------------------------------
 
     @property
     def is_recording(self) -> bool:
@@ -90,6 +200,10 @@ class SandboxTerminal:
     def stop_record(self) -> Path | None:
         return self.stop_recording()
 
+    # ------------------------------------------------------------------
+    # Input API
+    # ------------------------------------------------------------------
+
     def run(
         self, command: Command, *, cwd: str | os.PathLike[str] | None = None, env: dict[str, str] | None = None, check: bool = False
     ) -> SandboxResult:
@@ -124,20 +238,33 @@ class SandboxTerminal:
                 self._record("k", "\b")
             return self
         if normalized == "tab":
-            self._pending_text += "\t"
-            self._pending_command = self._pending_text
+            self._ensure_prompt()
             self._record("k", "\t")
+            self._ensure_pty()
+            self._pty_send("\t")
+            time.sleep(0.15)
+            expanded = self._pty_drain(timeout=0.4)
+            if expanded:
+                self._record("o", expanded)
+                # Append any visible expansion to pending_text
+                visible = strip_ansi(expanded).rstrip("\r\n")
+                if visible and not visible.startswith("\x07"):  # ignore bell-only responses
+                    self._pending_text += visible.lstrip(self._pending_text[-len(visible):] if self._pending_text else "")
             return self
         if len(key) == 1:
             return self.type(key)
         raise ValueError(f"unknown key: {key}")
 
-    def enter(self, *, cwd: str | os.PathLike[str] | None = None, env: dict[str, str] | None = None, check: bool = False) -> SandboxResult:
+    def enter(
+        self, *, cwd: str | os.PathLike[str] | None = None, env: dict[str, str] | None = None, check: bool = False
+    ) -> SandboxResult:
         command = self._pending_command if self._pending_command is not None else self._pending_text
+        self._record("k", "\n")
+        self._line_started = False
+        self._pending_text = ""
+        self._pending_command = None
+
         if not command:
-            self._ensure_prompt()
-            self._record("k", "\n")
-            self._line_started = False
             return SandboxResult(
                 sandbox_id=self._sandbox.id,
                 command="",
@@ -145,30 +272,95 @@ class SandboxTerminal:
                 stdout="",
                 stderr="",
                 duration_seconds=0,
-                cwd=Path(cwd) if cwd is not None else self._effective_cwd,
+                cwd=self._current_cwd or self._sandbox.root,
                 recording_path=self._recording_path,
             )
-        self._record("k", "\n")
-        self._line_started = False
-        self._pending_text = ""
-        self._pending_command = None
-        # Handle cd locally — there's no persistent shell between commands
+
+        self._ensure_pty()
+        started = time.monotonic()
+
         from nowbox.utils import command_text as _cmd_text
         cmd_str = (_cmd_text(command) if not isinstance(command, str) else command).strip()
-        if cmd_str == "cd" or cmd_str.startswith("cd "):
-            return self._execute_cd(cmd_str, cwd=cwd)
-        return self._execute(command, cwd=cwd, env=env, check=check)
+
+        # Silent cwd change if caller overrides
+        if cwd is not None and Path(cwd) != self._current_cwd:
+            self._pty_send(f"cd {shlex.quote(str(cwd))}\n")
+            raw_cd = self._pty_read_until_sentinel(timeout=5)
+            self._pty_drain(timeout=0.1)
+            m = _SENTINEL_RE.search(raw_cd)
+            if m and m.group(2):
+                self._current_cwd = Path(m.group(2))
+
+        # Prefix env vars inline if provided
+        if env:
+            prefix = " ".join(f"{k}={shlex.quote(v)}" for k, v in env.items())
+            cmd_str = f"{prefix} {cmd_str}"
+
+        self._pty_send(cmd_str + "\n")
+        raw = self._pty_read_until_sentinel(timeout=30)
+        self._pty_drain(timeout=0.1)
+        duration = time.monotonic() - started
+
+        # Parse sentinel for exit code + new cwd
+        m = _SENTINEL_RE.search(raw)
+        exit_code = int(m.group(1)) if m else 0
+        if m and m.group(2):
+            self._current_cwd = Path(m.group(2))
+
+        # Parse output: normalise newlines (handle \r\r\n from nested PTY),
+        # take everything before the sentinel line. Echo is disabled so there
+        # is no command echo to skip.
+        normalised = raw.replace("\r\r\n", "\n").replace("\r\n", "\n").replace("\r", "\n")
+        output_lines: list[str] = []
+        for line in normalised.split("\n"):
+            if _SENTINEL_PREFIX in line:
+                break
+            output_lines.append(line)
+        output = "\n".join(output_lines).strip()
+
+        if output:
+            self._record("o", output + "\n")
+        if self._recording_path is not None:
+            self._exit_codes.append(exit_code)
+
+        result = SandboxResult(
+            sandbox_id=self._sandbox.id,
+            command=command,
+            exit_code=exit_code,
+            stdout=output,
+            stderr="",
+            duration_seconds=duration,
+            cwd=self._current_cwd or self._sandbox.root,
+            recording_path=self._recording_path,
+            output=strip_ansi(output).strip(),
+        )
+        if check and not result.ok:
+            raise subprocess.CalledProcessError(result.exit_code, result.command, output=result.stdout, stderr=result.stderr)
+        return result
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
 
     def _type_command(self, command: list[str] | str) -> SandboxTerminal:
         from nowbox.utils import command_text
-
         self._pending_command = command
         return self.type(command_text(command))
+
+    @property
+    def _effective_cwd(self) -> Path:
+        return self._current_cwd if self._current_cwd is not None else self._sandbox.root
+
+    def _cwd_label(self) -> str:
+        cwd = self._effective_cwd
+        try:
+            return "~/" + str(cwd.relative_to(Path.home())).lstrip(".")
+        except ValueError:
+            return str(cwd)
 
     def _ensure_prompt(self) -> None:
         if not self._line_started:
             cwd = self._cwd_label()
-            # cyan dir, reset, yellow $, reset
             self._record("o", f"\x1b[36m{cwd}\x1b[0m \x1b[33m$\x1b[0m ")
             self._line_started = True
 
@@ -178,102 +370,3 @@ class SandboxTerminal:
         elapsed = time.monotonic() - self._recording_started_at
         self._events.append((elapsed, stream, text))
         self._transcript.append(text)
-
-    def _execute_cd(self, cmd_str: str, *, cwd: str | os.PathLike[str] | None = None) -> SandboxResult:
-        base = Path(cwd) if cwd is not None else self._effective_cwd
-        parts = cmd_str.split(None, 1)
-        target = parts[1] if len(parts) > 1 else "~"
-        if target == "~" or target == "$HOME":
-            new_cwd = Path.home()
-        elif target.startswith("~/"):
-            new_cwd = Path.home() / target[2:]
-        elif target.startswith("/"):
-            new_cwd = Path(target)
-        else:
-            new_cwd = base / target
-        self._current_cwd = new_cwd
-        return SandboxResult(
-            sandbox_id=self._sandbox.id,
-            command=cmd_str,
-            exit_code=0,
-            stdout="",
-            stderr="",
-            duration_seconds=0,
-            cwd=new_cwd,
-            recording_path=self._recording_path,
-        )
-
-    def _execute(
-        self, command: list[str] | str, *, cwd: str | os.PathLike[str] | None = None, env: dict[str, str] | None = None, check: bool = False
-    ) -> SandboxResult:
-        normalized = normalize_command(command)
-        working_dir = Path(cwd) if cwd is not None else self._effective_cwd
-        exec_cmd, host_cwd = self._sandbox._build_exec(normalized, working_dir)
-        started = time.monotonic()
-        master_fd, slave_fd = pty.openpty()
-        try:
-            proc = subprocess.Popen(
-                exec_cmd,
-                cwd=host_cwd,
-                env={**os.environ, **env} if env is not None else None,
-                stdin=slave_fd,
-                stdout=slave_fd,
-                stderr=slave_fd,
-                text=False,
-                shell=isinstance(exec_cmd, str),
-                close_fds=True,
-            )
-            os.close(slave_fd)
-            slave_fd = -1
-            chunks: list[str] = []
-            while True:
-                readable, _, _ = select.select([master_fd], [], [], 0.05)
-                if master_fd in readable:
-                    try:
-                        data = os.read(master_fd, 4096)
-                    except OSError:
-                        data = b""
-                    if data:
-                        text = data.decode(errors="replace")
-                        chunks.append(text)
-                        self._record("o", text)
-                if proc.poll() is not None:
-                    while True:
-                        readable, _, _ = select.select([master_fd], [], [], 0)
-                        if master_fd not in readable:
-                            break
-                        try:
-                            data = os.read(master_fd, 4096)
-                        except OSError:
-                            break
-                        if not data:
-                            break
-                        text = data.decode(errors="replace")
-                        chunks.append(text)
-                        self._record("o", text)
-                    break
-            exit_code = proc.wait()
-        finally:
-            if slave_fd >= 0:
-                os.close(slave_fd)
-            os.close(master_fd)
-
-        duration = time.monotonic() - started
-        if self._recording_path is not None:
-            self._exit_codes.append(exit_code)
-        self._current_cwd = working_dir
-        raw = "".join(chunks)
-        result = SandboxResult(
-            sandbox_id=self._sandbox.id,
-            command=normalized,
-            exit_code=exit_code,
-            stdout=raw,
-            stderr="",
-            duration_seconds=duration,
-            cwd=working_dir,
-            recording_path=self._recording_path,
-            output=strip_ansi(raw).strip(),
-        )
-        if check and not result.ok:
-            raise subprocess.CalledProcessError(result.exit_code, result.command, output=result.stdout, stderr=result.stderr)
-        return result
