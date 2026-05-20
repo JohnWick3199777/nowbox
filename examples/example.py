@@ -17,7 +17,9 @@ result = terminal.enter()
 print(result.output)
 
 terminal.paste(
-    "python -c \"import shutil; t,u,f = shutil.disk_usage('/'); print(f'Disk: {t//(1<<30)}GB total, {f//(1<<30)}GB free')\""
+    'python -c "'
+    "import shutil; t,u,f = shutil.disk_usage('/');"
+    " print(f'Disk: {t//(1<<30)}GB total, {f//(1<<30)}GB free')\""
 )
 result = terminal.enter()
 print(result.output)

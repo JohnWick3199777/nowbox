@@ -8,9 +8,8 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from pathlib import Path
 
-from nowbox.recording import normalize_recording, record_run_mp4
 from nowbox.terminal import SandboxTerminal
-from nowbox.types import Command, RecordingOptions, SandboxResult, SandboxStatus
+from nowbox.types import Command, SandboxResult, SandboxStatus
 from nowbox.utils import normalize_command
 
 
@@ -58,7 +57,6 @@ class Sandbox(ABC):
         cwd: str | os.PathLike[str] | None = None,
         env: Mapping[str, str] | None = None,
         check: bool = False,
-        recording: RecordingOptions | bool = False,
     ) -> SandboxResult:
         """Run a command in the sandbox and return its captured result."""
 
@@ -113,7 +111,6 @@ class LocalSandbox(Sandbox):
         cwd: str | os.PathLike[str] | None = None,
         env: Mapping[str, str] | None = None,
         check: bool = False,
-        recording: RecordingOptions | bool = False,
     ) -> SandboxResult:
         normalized = normalize_command(command)
         working_dir = Path(cwd) if cwd is not None else self.root
@@ -127,19 +124,6 @@ class LocalSandbox(Sandbox):
             shell=isinstance(normalized, str),
         )
         duration = time.monotonic() - started
-        recording_options = normalize_recording(recording, working_dir)
-        recording_path = record_run_mp4(
-            sandbox_id=self.id,
-            sandbox_name=self.name,
-            sandbox_backend=self.backend,
-            command=normalized,
-            cwd=working_dir,
-            exit_code=completed.returncode,
-            stdout=completed.stdout,
-            stderr=completed.stderr,
-            duration_seconds=duration,
-            options=recording_options,
-        )
         result = SandboxResult(
             sandbox_id=self.id,
             command=normalized,
@@ -148,7 +132,6 @@ class LocalSandbox(Sandbox):
             stderr=completed.stderr,
             duration_seconds=duration,
             cwd=working_dir,
-            recording_path=recording_path,
         )
         if check and not result.ok:
             raise subprocess.CalledProcessError(
