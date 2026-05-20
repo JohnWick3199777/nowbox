@@ -5,11 +5,12 @@ import pty
 import select
 import subprocess
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from nowbox.recording import record_terminal_mp4, write_cast
-from nowbox.types import Command, RecordingOptions, SandboxResult
+from nowbox.types import Command, RecordingMetadata, RecordingOptions, SandboxResult
 from nowbox.utils import normalize_command, strip_ansi
 
 if TYPE_CHECKING:
@@ -21,8 +22,10 @@ class SandboxTerminal:
         self._sandbox = sandbox
         self._recording_path: Path | None = None
         self._recording_started_at: float | None = None
+        self._recording_started_at_iso: str | None = None
         self._events: list[tuple[float, str, str]] = []
         self._transcript: list[str] = []
+        self._exit_codes: list[int] = []
         self._line_started = False
         self._pending_text = ""
         self._pending_command: list[str] | str | None = None
@@ -34,8 +37,10 @@ class SandboxTerminal:
     def start_recording(self, path: str | os.PathLike[str] | None = None) -> Path:
         self._recording_path = Path(path) if path is not None else self._sandbox.root / "artifacts" / "terminal.mp4"
         self._recording_started_at = time.monotonic()
+        self._recording_started_at_iso = datetime.now(timezone.utc).isoformat()
         self._events.clear()
         self._transcript.clear()
+        self._exit_codes.clear()
         self._line_started = False
         self._pending_text = ""
         self._pending_command = None
@@ -48,12 +53,24 @@ class SandboxTerminal:
         path = self._recording_path
         if path is None:
             return None
+        ended_at = datetime.now(timezone.utc).isoformat()
+        duration = time.monotonic() - self._recording_started_at if self._recording_started_at is not None else 0.0
+        metadata = RecordingMetadata(
+            sandbox_id=self._sandbox.id,
+            sandbox_name=self._sandbox.name,
+            sandbox_backend=self._sandbox.backend,
+            started_at=self._recording_started_at_iso or ended_at,
+            ended_at=ended_at,
+            duration_seconds=round(duration, 3),
+            exit_codes=list(self._exit_codes),
+        )
         if path.suffix == ".cast":
-            write_cast(path, self._events)
+            write_cast(path, self._events, metadata)
         else:
-            record_terminal_mp4(events=self._events, path=path, options=RecordingOptions(path=path))
+            record_terminal_mp4(events=self._events, path=path, options=RecordingOptions(path=path), metadata=metadata)
         self._recording_path = None
         self._recording_started_at = None
+        self._recording_started_at_iso = None
         return path
 
     def stop_record(self) -> Path | None:
@@ -197,6 +214,8 @@ class SandboxTerminal:
             os.close(master_fd)
 
         duration = time.monotonic() - started
+        if self._recording_path is not None:
+            self._exit_codes.append(exit_code)
         raw = "".join(chunks)
         result = SandboxResult(
             sandbox_id=self._sandbox.id,

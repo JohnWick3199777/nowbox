@@ -11,7 +11,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 from PIL import ImageFont as PILFont
 
-from nowbox.types import RecordingOptions
+from nowbox.types import RecordingMetadata, RecordingOptions
 from nowbox.utils import chunks, command_text, strip_ansi
 
 # ---------------------------------------------------------------------------
@@ -114,7 +114,9 @@ def _write_text_mp4(*, text: str, path: Path, options: RecordingOptions) -> Path
 # ---------------------------------------------------------------------------
 
 
-def record_terminal_mp4(*, events: list[tuple[float, str, str]], path: Path, options: RecordingOptions) -> Path:
+def record_terminal_mp4(
+    *, events: list[tuple[float, str, str]], path: Path, options: RecordingOptions, metadata: RecordingMetadata | None = None
+) -> Path:
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg is None:
         raise RuntimeError("MP4 recording requires ffmpeg on PATH")
@@ -133,12 +135,43 @@ def record_terminal_mp4(*, events: list[tuple[float, str, str]], path: Path, opt
             capture_output=True,
             text=True,
         )
+    if metadata is not None:
+        _write_metadata_sidecar(path, metadata)
     return path
 
 
-def write_cast(path: Path, events: list[tuple[float, str, str]]) -> None:
+def _write_metadata_sidecar(recording_path: Path, metadata: RecordingMetadata) -> None:
+    sidecar = recording_path.with_suffix(".meta.json")
+    sidecar.write_text(
+        json.dumps(
+            {
+                "sandbox_id": metadata.sandbox_id,
+                "sandbox_name": metadata.sandbox_name,
+                "sandbox_backend": metadata.sandbox_backend,
+                "started_at": metadata.started_at,
+                "ended_at": metadata.ended_at,
+                "duration_seconds": metadata.duration_seconds,
+                "exit_codes": metadata.exit_codes,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def write_cast(path: Path, events: list[tuple[float, str, str]], metadata: RecordingMetadata | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    lines = [json.dumps({"version": 2, "width": 100, "height": 30, "timestamp": int(time.time())})]
+    header: dict[str, object] = {"version": 2, "width": 100, "height": 30, "timestamp": int(time.time())}
+    if metadata is not None:
+        header["sandbox_id"] = metadata.sandbox_id
+        header["sandbox_name"] = metadata.sandbox_name
+        header["sandbox_backend"] = metadata.sandbox_backend
+        header["started_at"] = metadata.started_at
+        header["ended_at"] = metadata.ended_at
+        header["duration_seconds"] = metadata.duration_seconds
+        header["exit_codes"] = metadata.exit_codes
+    lines = [json.dumps(header)]
     for elapsed, stream, text in events:
         lines.append(json.dumps([elapsed, stream, text]))
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
