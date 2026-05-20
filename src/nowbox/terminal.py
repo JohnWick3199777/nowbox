@@ -28,7 +28,9 @@ _BASH_SETUP = (
     "stty -echo\n"
     r"""export PROMPT_COMMAND='printf "NOWBOX_READY:$?:$PWD\n"'""" + "\n"
     "export PS1=''\n"
-    "stty echo\n"
+    "bind 'set enable-bracketed-paste off' 2>/dev/null || true\n"
+    # Echo stays OFF — we record keystrokes via _record(); PTY echo is redundant
+    # and causes long commands to bleed into output when they wrap.
 )
 
 
@@ -68,7 +70,6 @@ class SandboxTerminal:
         time.sleep(0.05)
         self._pty_drain(timeout=0.2)
         self._pty_send(_BASH_SETUP)
-        self._pty_send("stty echo\n")
         # Trigger one empty command to flush the first sentinel
         self._pty_send("\n")
         raw = self._pty_read_until_sentinel(timeout=8)
@@ -306,16 +307,14 @@ class SandboxTerminal:
         if m and m.group(2):
             self._current_cwd = Path(m.group(2))
 
-        # Strip command echo (first line) and sentinel; record clean output
-        lines = raw.replace("\r\n", "\n").split("\n")
+        # Parse output: normalise newlines (handle \r\r\n from nested PTY),
+        # take everything before the sentinel line. Echo is disabled so there
+        # is no command echo to skip.
+        normalised = raw.replace("\r\r\n", "\n").replace("\r\n", "\n").replace("\r", "\n")
         output_lines: list[str] = []
-        skip_first = True
-        for line in lines:
+        for line in normalised.split("\n"):
             if _SENTINEL_PREFIX in line:
                 break
-            if skip_first:
-                skip_first = False
-                continue
             output_lines.append(line)
         output = "\n".join(output_lines).strip()
 
