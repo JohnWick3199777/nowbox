@@ -25,6 +25,13 @@ terminal.paste("python -c \"import shutil; t,u,f = shutil.disk_usage('/'); print
 result = terminal.enter()
 print(result.output)
 
+terminal.paste("cd /tmp")
+terminal.enter()
+
+terminal.paste("ls")
+result = terminal.enter()
+print(result.output)
+
 terminal.stop_record()
 recording = Path("artifacts/terminal.mp4")
 print(f"Recording saved to: {recording}")

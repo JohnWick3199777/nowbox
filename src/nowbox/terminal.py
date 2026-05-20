@@ -29,6 +29,18 @@ class SandboxTerminal:
         self._line_started = False
         self._pending_text = ""
         self._pending_command: list[str] | str | None = None
+        self._current_cwd: Path | None = None
+
+    @property
+    def _effective_cwd(self) -> Path:
+        return self._current_cwd if self._current_cwd is not None else self._sandbox.root
+
+    def _cwd_label(self) -> str:
+        cwd = self._effective_cwd
+        try:
+            return "~/" + str(cwd.relative_to(Path.home())).lstrip(".")
+        except ValueError:
+            return str(cwd)
 
     @property
     def is_recording(self) -> bool:
@@ -133,13 +145,18 @@ class SandboxTerminal:
                 stdout="",
                 stderr="",
                 duration_seconds=0,
-                cwd=Path(cwd) if cwd is not None else self._sandbox.root,
+                cwd=Path(cwd) if cwd is not None else self._effective_cwd,
                 recording_path=self._recording_path,
             )
         self._record("k", "\n")
         self._line_started = False
         self._pending_text = ""
         self._pending_command = None
+        # Handle cd locally — there's no persistent shell between commands
+        from nowbox.utils import command_text as _cmd_text
+        cmd_str = (_cmd_text(command) if not isinstance(command, str) else command).strip()
+        if cmd_str == "cd" or cmd_str.startswith("cd "):
+            return self._execute_cd(cmd_str, cwd=cwd)
         return self._execute(command, cwd=cwd, env=env, check=check)
 
     def _type_command(self, command: list[str] | str) -> SandboxTerminal:
@@ -150,7 +167,7 @@ class SandboxTerminal:
 
     def _ensure_prompt(self) -> None:
         if not self._line_started:
-            self._record("o", "$ ")
+            self._record("o", f"{self._cwd_label()} $ ")
             self._line_started = True
 
     def _record(self, stream: str, text: str) -> None:
@@ -160,11 +177,35 @@ class SandboxTerminal:
         self._events.append((elapsed, stream, text))
         self._transcript.append(text)
 
+    def _execute_cd(self, cmd_str: str, *, cwd: str | os.PathLike[str] | None = None) -> SandboxResult:
+        base = Path(cwd) if cwd is not None else self._effective_cwd
+        parts = cmd_str.split(None, 1)
+        target = parts[1] if len(parts) > 1 else "~"
+        if target == "~" or target == "$HOME":
+            new_cwd = Path.home()
+        elif target.startswith("~/"):
+            new_cwd = Path.home() / target[2:]
+        elif target.startswith("/"):
+            new_cwd = Path(target)
+        else:
+            new_cwd = base / target
+        self._current_cwd = new_cwd
+        return SandboxResult(
+            sandbox_id=self._sandbox.id,
+            command=cmd_str,
+            exit_code=0,
+            stdout="",
+            stderr="",
+            duration_seconds=0,
+            cwd=new_cwd,
+            recording_path=self._recording_path,
+        )
+
     def _execute(
         self, command: list[str] | str, *, cwd: str | os.PathLike[str] | None = None, env: dict[str, str] | None = None, check: bool = False
     ) -> SandboxResult:
         normalized = normalize_command(command)
-        working_dir = Path(cwd) if cwd is not None else self._sandbox.root
+        working_dir = Path(cwd) if cwd is not None else self._effective_cwd
         exec_cmd, host_cwd = self._sandbox._build_exec(normalized, working_dir)
         started = time.monotonic()
         master_fd, slave_fd = pty.openpty()
@@ -218,6 +259,7 @@ class SandboxTerminal:
         duration = time.monotonic() - started
         if self._recording_path is not None:
             self._exit_codes.append(exit_code)
+        self._current_cwd = working_dir
         raw = "".join(chunks)
         result = SandboxResult(
             sandbox_id=self._sandbox.id,
