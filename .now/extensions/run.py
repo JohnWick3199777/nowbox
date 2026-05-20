@@ -5,13 +5,13 @@ from pathlib import Path
 from now_sdk import Context, argument, command, mode, option
 
 
-def _example_files(root: Path) -> list[str]:
-    return sorted(p.stem for p in (root / "examples").glob("*.py"))
+def _example_files() -> list[str]:
+    return sorted(p.stem for p in Path("examples").glob("*.py"))
 
 
 @command("run")
 @mode("dev")
-@argument("file", default="example", choices=lambda: _example_files(Path(".")), help="Example to run")
+@argument("file", default="example", choices=_example_files, help="Example to run")
 @option("--debug", is_flag=True, help="Open in VS Code and start the debugger")
 @option("--profile", is_flag=True, help="Run with cProfile and print the top 20 calls")
 def run(ctx: Context) -> None:
