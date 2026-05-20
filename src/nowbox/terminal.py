@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from nowbox.recording import record_terminal_mp4, write_cast
+from nowbox.session import TerminalSession
 from nowbox.types import Command, RecordingMetadata, RecordingOptions, SandboxResult
 from nowbox.utils import normalize_command, strip_ansi
 
@@ -89,6 +90,17 @@ class SandboxTerminal:
 
     def stop_record(self) -> Path | None:
         return self.stop_recording()
+
+    def session(self) -> TerminalSession:
+        """Return a persistent interactive PTY session for this sandbox.
+
+        Use as a context manager::
+
+            with terminal.session() as sess:
+                sess.type("git br").key("tab")
+                output = sess.expect_prompt()
+        """
+        return TerminalSession(self._sandbox, self)
 
     def run(
         self, command: Command, *, cwd: str | os.PathLike[str] | None = None, env: dict[str, str] | None = None, check: bool = False

@@ -76,3 +76,7 @@ class Sandbox(ABC):
         (e.g. prefixing with ``container exec``).
         """
         return command, cwd
+
+    def _build_shell_cmd(self) -> list[str]:
+        """Return the command that starts a persistent interactive bash session."""
+        return ["bash", "-i"]

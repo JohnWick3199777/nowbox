@@ -144,5 +144,8 @@ class AppleContainerSandbox(Sandbox):
             args += ["sh", "-c", command]
         return args
 
+    def _build_shell_cmd(self) -> list[str]:
+        return ["container", "exec", "-i", self._name, "bash"]
+
     def _build_exec(self, command: list[str] | str, cwd: Path) -> tuple[list[str] | str, Path]:
         return self._container_exec_cmd(command, cwd), Path.home()
