@@ -13,7 +13,7 @@ from nowbox.types import Command, RecordingOptions, SandboxResult
 from nowbox.utils import normalize_command, strip_ansi
 
 if TYPE_CHECKING:
-    from nowbox.sandbox import Sandbox
+    from nowbox.sandbox.base import Sandbox
 
 
 class SandboxTerminal:
