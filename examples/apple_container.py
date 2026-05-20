@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 
 from nowbox import AppleContainerSandbox
@@ -8,11 +9,11 @@ sandbox.start()
 terminal = sandbox.terminal
 terminal.start_record(Path("artifacts/terminal.mp4"))
 
-terminal.type("python --version")
+terminal.paste("python --version")
 result = terminal.enter()
 print(result.output)
 
-terminal.type('python -c "import platform; print(platform.platform())"')
+terminal.paste('python -c "import platform; print(platform.platform())"')
 result = terminal.enter()
 print(result.output)
 
@@ -25,6 +26,8 @@ result = terminal.enter()
 print(result.output)
 
 terminal.stop_record()
-print(f"Recording saved to: {Path('artifacts/terminal.mp4')}")
+recording = Path("artifacts/terminal.mp4")
+print(f"Recording saved to: {recording}")
+subprocess.run(["open", str(recording)])
 
 sandbox.stop()

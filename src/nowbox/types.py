@@ -2,11 +2,24 @@ from __future__ import annotations
 
 import os
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 Command = str | Sequence[str | os.PathLike[str]]
 SandboxStatus = str
+
+
+@dataclass(frozen=True)
+class RecordingMetadata:
+    sandbox_id: str
+    sandbox_name: str
+    sandbox_backend: str
+    started_at: str  # ISO-8601 UTC
+    ended_at: str  # ISO-8601 UTC
+    duration_seconds: float
+    exit_codes: list[int] = field(default_factory=list)
+    image: str | None = None
+    platform: str | None = None
 
 
 @dataclass(frozen=True)

@@ -39,6 +39,16 @@ class Sandbox(ABC):
         """Current lifecycle status for this sandbox."""
 
     @property
+    def image(self) -> str | None:
+        """Container image name, if applicable."""
+        return None
+
+    @property
+    def platform(self) -> str | None:
+        """Platform/OS string for this sandbox, if known."""
+        return None
+
+    @property
     @abstractmethod
     def created_at(self) -> float:
         """Unix timestamp for when this sandbox was created."""

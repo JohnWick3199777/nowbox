@@ -11,7 +11,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 from PIL import ImageFont as PILFont
 
-from nowbox.types import RecordingOptions
+from nowbox.types import RecordingMetadata, RecordingOptions
 from nowbox.utils import chunks, command_text, strip_ansi
 
 # ---------------------------------------------------------------------------
@@ -114,7 +114,9 @@ def _write_text_mp4(*, text: str, path: Path, options: RecordingOptions) -> Path
 # ---------------------------------------------------------------------------
 
 
-def record_terminal_mp4(*, events: list[tuple[float, str, str]], path: Path, options: RecordingOptions) -> Path:
+def record_terminal_mp4(
+    *, events: list[tuple[float, str, str]], path: Path, options: RecordingOptions, metadata: RecordingMetadata | None = None
+) -> Path:
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg is None:
         raise RuntimeError("MP4 recording requires ffmpeg on PATH")
@@ -125,7 +127,14 @@ def record_terminal_mp4(*, events: list[tuple[float, str, str]], path: Path, opt
         for index, (text, key) in enumerate(frames):
             frame_path = frame_dir / f"frame-{index:04d}.png"
             write_frame(
-                text, frame_path, width=options.width, height=options.height, font_size=options.font_size, keyboard_key=key, show_keyboard=True
+                text,
+                frame_path,
+                width=options.width,
+                height=options.height,
+                font_size=options.font_size,
+                keyboard_key=key,
+                show_keyboard=True,
+                metadata=metadata,
             )
         subprocess.run(
             [ffmpeg, "-y", "-framerate", "8", "-i", str(frame_dir / "frame-%04d.png"), "-pix_fmt", "yuv420p", str(path)],
@@ -136,9 +145,19 @@ def record_terminal_mp4(*, events: list[tuple[float, str, str]], path: Path, opt
     return path
 
 
-def write_cast(path: Path, events: list[tuple[float, str, str]]) -> None:
+
+def write_cast(path: Path, events: list[tuple[float, str, str]], metadata: RecordingMetadata | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    lines = [json.dumps({"version": 2, "width": 100, "height": 30, "timestamp": int(time.time())})]
+    header: dict[str, object] = {"version": 2, "width": 100, "height": 30, "timestamp": int(time.time())}
+    if metadata is not None:
+        header["sandbox_id"] = metadata.sandbox_id
+        header["sandbox_name"] = metadata.sandbox_name
+        header["sandbox_backend"] = metadata.sandbox_backend
+        header["started_at"] = metadata.started_at
+        header["ended_at"] = metadata.ended_at
+        header["duration_seconds"] = metadata.duration_seconds
+        header["exit_codes"] = metadata.exit_codes
+    lines = [json.dumps(header)]
     for elapsed, stream, text in events:
         lines.append(json.dumps([elapsed, stream, text]))
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -161,7 +180,7 @@ def build_terminal_frames(events: list[tuple[float, str, str]], options: Recordi
     rows = max(5, (terminal_height - pad_y * 2) // line_height)
     state = TerminalScreen(cols=cols, rows=rows)
     frames: list[tuple[str, str | None]] = [(state.render(cursor=True), None)]
-    for _, stream, text in events:
+    for i, (_, stream, text) in enumerate(events):
         cleaned = strip_ansi(text)
         if stream == "k":
             for char in cleaned:
@@ -169,12 +188,19 @@ def build_terminal_frames(events: list[tuple[float, str, str]], options: Recordi
                 state.write(char)
                 frames.extend([(state.render(cursor=True), key)] * _key_hold_frames(key))
         elif stream == "p":
-            state.write(cleaned)
-            frames.append((state.render(cursor=True), None))
+            # animate paste as a quick fill across ~4 frames
+            chunk_size = max(1, len(cleaned) // 4)
+            for chunk in chunks(cleaned, chunk_size):
+                state.write(chunk)
+                frames.append((state.render(cursor=True), None))
         else:
             for chunk in chunks(cleaned, 12):
                 state.write(chunk)
                 frames.append((state.render(cursor=True), None))
+            # pause after output before the next command so each result is readable
+            next_stream = events[i + 1][1] if i + 1 < len(events) else None
+            if next_stream in ("p", "k"):
+                frames.extend([(frames[-1][0], None)] * 6)
     if len(frames) > 240:
         step = max(1, len(frames) // 240)
         frames = frames[::step]
@@ -266,7 +292,15 @@ def _load_font(size: int) -> PILFont.FreeTypeFont:
 
 
 def write_frame(
-    text: str, path: Path, *, width: int, height: int, font_size: int, keyboard_key: str | None = None, show_keyboard: bool = False
+    text: str,
+    path: Path,
+    *,
+    width: int,
+    height: int,
+    font_size: int,
+    keyboard_key: str | None = None,
+    show_keyboard: bool = False,
+    metadata: RecordingMetadata | None = None,
 ) -> None:
     font = _load_font(font_size)
     ascent, descent = font.getmetrics()
@@ -299,12 +333,14 @@ def write_frame(
     for cx, color in [(18, (255, 95, 86)), (38, (255, 189, 46)), (58, (39, 201, 63))]:
         draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=color)
 
-    # Window title
-    title = "Terminal"
     title_font = _load_font(max(10, font_size - 6))
-    title_w = int(title_font.getlength(title))
     ta, td = title_font.getmetrics()
-    draw.text(((width - title_w) // 2, (_TITLE_BAR_HEIGHT - ta - td) // 2), title, font=title_font, fill=(160, 160, 160))
+    title_y = (_TITLE_BAR_HEIGHT - ta - td) // 2
+
+    # Window title (center)
+    title = "Terminal"
+    title_w = int(title_font.getlength(title))
+    draw.text(((width - title_w) // 2, title_y), title, font=title_font, fill=(160, 160, 160))
 
     # Terminal text
     for row, line in enumerate(lines):
@@ -314,7 +350,45 @@ def write_frame(
     if show_keyboard:
         _draw_keyboard(draw, width, height, keyboard_key, font_size)
 
+    if metadata is not None:
+        _draw_metadata_panel(draw, width, metadata, font_size)
+
     img.save(str(path))
+
+
+def _draw_metadata_panel(draw: ImageDraw.ImageDraw, width: int, metadata: RecordingMetadata, font_size: int) -> None:
+    font = _load_font(max(10, font_size - 3))
+    fa, fd = font.getmetrics()
+    line_h = fa + fd + 4
+
+    ts = metadata.started_at[:19].replace("T", "  ")
+    rows = [
+        ("sandbox", metadata.sandbox_name),
+        ("backend", metadata.sandbox_backend),
+        ("id", metadata.sandbox_id),
+        ("started", ts),
+    ]
+    if metadata.image is not None:
+        rows.insert(2, ("image", metadata.image))
+    if metadata.platform is not None:
+        rows.append(("platform", metadata.platform))
+
+    pad = 12
+    label_col_w = max(int(font.getlength(label)) for label, _ in rows)
+    value_col_w = max(int(font.getlength(value)) for _, value in rows)
+    gap = 10
+    panel_w = pad * 2 + label_col_w + gap + value_col_w
+    panel_h = pad * 2 + line_h * len(rows) - 4
+
+    panel_x = width - panel_w - 16
+    panel_y = _TITLE_BAR_HEIGHT + 16
+
+    draw.rectangle([panel_x, panel_y, panel_x + panel_w, panel_y + panel_h], fill=(40, 40, 40), outline=(65, 65, 65))
+
+    for i, (label, value) in enumerate(rows):
+        y = panel_y + pad + i * line_h
+        draw.text((panel_x + pad, y), label, font=font, fill=(120, 120, 120))
+        draw.text((panel_x + pad + label_col_w + gap, y), value, font=font, fill=(210, 210, 210))
 
 
 def _draw_keyboard(draw: ImageDraw.ImageDraw, width: int, height: int, active_key: str | None, font_size: int) -> None:
