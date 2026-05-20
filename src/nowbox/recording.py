@@ -127,7 +127,14 @@ def record_terminal_mp4(
         for index, (text, key) in enumerate(frames):
             frame_path = frame_dir / f"frame-{index:04d}.png"
             write_frame(
-                text, frame_path, width=options.width, height=options.height, font_size=options.font_size, keyboard_key=key, show_keyboard=True
+                text,
+                frame_path,
+                width=options.width,
+                height=options.height,
+                font_size=options.font_size,
+                keyboard_key=key,
+                show_keyboard=True,
+                metadata=metadata,
             )
         subprocess.run(
             [ffmpeg, "-y", "-framerate", "8", "-i", str(frame_dir / "frame-%04d.png"), "-pix_fmt", "yuv420p", str(path)],
@@ -135,29 +142,8 @@ def record_terminal_mp4(
             capture_output=True,
             text=True,
         )
-    if metadata is not None:
-        _write_metadata_sidecar(path, metadata)
     return path
 
-
-def _write_metadata_sidecar(recording_path: Path, metadata: RecordingMetadata) -> None:
-    sidecar = recording_path.with_suffix(".meta.json")
-    sidecar.write_text(
-        json.dumps(
-            {
-                "sandbox_id": metadata.sandbox_id,
-                "sandbox_name": metadata.sandbox_name,
-                "sandbox_backend": metadata.sandbox_backend,
-                "started_at": metadata.started_at,
-                "ended_at": metadata.ended_at,
-                "duration_seconds": metadata.duration_seconds,
-                "exit_codes": metadata.exit_codes,
-            },
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
 
 
 def write_cast(path: Path, events: list[tuple[float, str, str]], metadata: RecordingMetadata | None = None) -> None:
@@ -299,7 +285,15 @@ def _load_font(size: int) -> PILFont.FreeTypeFont:
 
 
 def write_frame(
-    text: str, path: Path, *, width: int, height: int, font_size: int, keyboard_key: str | None = None, show_keyboard: bool = False
+    text: str,
+    path: Path,
+    *,
+    width: int,
+    height: int,
+    font_size: int,
+    keyboard_key: str | None = None,
+    show_keyboard: bool = False,
+    metadata: RecordingMetadata | None = None,
 ) -> None:
     font = _load_font(font_size)
     ascent, descent = font.getmetrics()
@@ -332,12 +326,25 @@ def write_frame(
     for cx, color in [(18, (255, 95, 86)), (38, (255, 189, 46)), (58, (39, 201, 63))]:
         draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=color)
 
-    # Window title
-    title = "Terminal"
     title_font = _load_font(max(10, font_size - 6))
-    title_w = int(title_font.getlength(title))
     ta, td = title_font.getmetrics()
-    draw.text(((width - title_w) // 2, (_TITLE_BAR_HEIGHT - ta - td) // 2), title, font=title_font, fill=(160, 160, 160))
+    title_y = (_TITLE_BAR_HEIGHT - ta - td) // 2
+
+    # Window title (center)
+    title = "Terminal"
+    title_w = int(title_font.getlength(title))
+    draw.text(((width - title_w) // 2, title_y), title, font=title_font, fill=(160, 160, 160))
+
+    # Metadata in title bar
+    if metadata is not None:
+        meta_font = _load_font(max(8, font_size - 8))
+        # Left: "name · backend · id"
+        left_label = f"{metadata.sandbox_name}  ·  {metadata.sandbox_backend}  ·  {metadata.sandbox_id}"
+        draw.text((76, title_y + 1), left_label, font=meta_font, fill=(110, 110, 110))
+        # Right: start timestamp (date + time, no tz offset)
+        ts = metadata.started_at[:19].replace("T", "  ")
+        ts_w = int(meta_font.getlength(ts))
+        draw.text((width - ts_w - 12, title_y + 1), ts, font=meta_font, fill=(110, 110, 110))
 
     # Terminal text
     for row, line in enumerate(lines):
