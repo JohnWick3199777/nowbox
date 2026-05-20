@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 import os
 import subprocess
 import time
@@ -11,6 +12,8 @@ from nowbox.sandbox.base import Sandbox
 from nowbox.terminal import SandboxTerminal
 from nowbox.types import Command, SandboxResult, SandboxStatus
 from nowbox.utils import normalize_command
+
+_NOWBOX_LABEL = "nowbox.managed=true"
 
 
 class AppleContainerSandbox(Sandbox):
@@ -41,9 +44,18 @@ class AppleContainerSandbox(Sandbox):
         subprocess.run(["container", "stop", self._name], capture_output=True)
         subprocess.run(["container", "delete", self._name], capture_output=True)
         subprocess.run(
-            ["container", "run", "--name", self._name, "--detach", self._image, "sleep", "infinity"], check=True, capture_output=True, text=True
+            ["container", "run", "--name", self._name, "--label", _NOWBOX_LABEL, "--detach", self._image, "sleep", "infinity"],
+            check=True,
+            capture_output=True,
+            text=True,
         )
         self._status = "running"
+        atexit.register(self._atexit_cleanup)
+
+    def _atexit_cleanup(self) -> None:
+        if self._status == "running":
+            subprocess.run(["container", "stop", self._name], capture_output=True)
+            subprocess.run(["container", "delete", self._name], capture_output=True)
 
     def stop(self) -> None:
         """Stop and delete the container."""

@@ -12,7 +12,7 @@ from PIL import Image, ImageDraw
 from PIL import ImageFont as PILFont
 
 from nowbox.types import RecordingMetadata, RecordingOptions
-from nowbox.utils import chunks, command_text, strip_ansi
+from nowbox.utils import ansi_chunks, chunks, command_text, strip_ansi
 
 Color = tuple[int, int, int]
 StyledLine = list[tuple[str, Color]]
@@ -211,7 +211,7 @@ def build_terminal_frames(events: list[tuple[float, str, str]], options: Recordi
                 state.write(chunk)
                 frames.append((state.render_styled(cursor=True), None))
         else:
-            for chunk in chunks(cleaned, 12):
+            for chunk in ansi_chunks(cleaned, 12):
                 state.write(chunk)
                 frames.append((state.render_styled(cursor=True), None))
             next_stream = events[i + 1][1] if i + 1 < len(events) else None

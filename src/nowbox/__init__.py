@@ -1,5 +1,16 @@
+from nowbox.leaks import LeakedContainer, cleanup_leaked_containers, list_leaked_containers
 from nowbox.sandbox import AppleContainerSandbox, LocalSandbox, Sandbox
 from nowbox.terminal import SandboxTerminal
 from nowbox.types import RecordingOptions, SandboxResult
 
-__all__ = ["AppleContainerSandbox", "LocalSandbox", "RecordingOptions", "Sandbox", "SandboxResult", "SandboxTerminal"]
+__all__ = [
+    "AppleContainerSandbox",
+    "LeakedContainer",
+    "LocalSandbox",
+    "RecordingOptions",
+    "Sandbox",
+    "SandboxResult",
+    "SandboxTerminal",
+    "cleanup_leaked_containers",
+    "list_leaked_containers",
+]
