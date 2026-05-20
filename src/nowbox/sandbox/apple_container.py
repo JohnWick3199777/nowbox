@@ -27,13 +27,14 @@ class AppleContainerSandbox(Sandbox):
             result = sb.run(["python", "--version"])
     """
 
-    def __init__(self, image: str, *, name: str | None = None, root: str | os.PathLike[str] = "/", id: str | None = None) -> None:
+    def __init__(self, image: str, *, name: str | None = None, root: str | os.PathLike[str] = "/", id: str | None = None, volumes: list[str] | None = None) -> None:
         self._image = image
         self._name = name or f"nowbox-{uuid.uuid4().hex[:12]}"
         self._root = Path(root)
         self._id = id or f"container-{uuid.uuid4().hex[:12]}"
         self._created_at = time.time()
         self._status: SandboxStatus = "created"
+        self._volumes = volumes or []
         self._terminal = SandboxTerminal(self)
 
     # --- lifecycle ---
@@ -43,12 +44,11 @@ class AppleContainerSandbox(Sandbox):
         # Clean up any leftover container with the same name before starting.
         subprocess.run(["container", "stop", self._name], capture_output=True)
         subprocess.run(["container", "delete", self._name], capture_output=True)
-        subprocess.run(
-            ["container", "run", "--name", self._name, "--label", _NOWBOX_LABEL, "--detach", self._image, "sleep", "infinity"],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+        cmd = ["container", "run", "--name", self._name, "--label", _NOWBOX_LABEL, "--detach"]
+        for v in self._volumes:
+            cmd += ["--volume", v]
+        cmd += [self._image, "sleep", "infinity"]
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
         self._status = "running"
         atexit.register(self._atexit_cleanup)
 
