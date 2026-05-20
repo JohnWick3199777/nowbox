@@ -6,23 +6,23 @@ sandbox = Sandbox(name="example")
 terminal = sandbox.terminal
 terminal.start_record(sandbox.root / "artifacts" / "terminal.mp4")
 
-terminal.type("python --version")
+terminal.paste("python3 --version")
 result = terminal.enter()
 print(result.output)
 
-terminal.type('python -c "import platform; print(platform.platform())"')
+terminal.paste('python3 -c "import platform; print(platform.platform())"')
 result = terminal.enter()
 print(result.output)
 
-terminal.paste("python -c \"import os; print(f'CPUs: {os.cpu_count()}')\"")
+terminal.paste("python3 -c \"import os; print(f'CPUs: {os.cpu_count()}')\"")
 result = terminal.enter()
 print(result.output)
 
-terminal.paste("python -c \"import shutil; t,u,f = shutil.disk_usage('/'); print(f'Disk: {t//(1<<30)}GB total, {f//(1<<30)}GB free')\"")
+terminal.paste("python3 -c \"import shutil; t,u,f = shutil.disk_usage('/'); print(f'Disk: {t//(1<<30)}GB total, {f//(1<<30)}GB free')\"")
 result = terminal.enter()
 print(result.output)
 
-terminal.type("python -c \"import sys; print(f'Python {sys.version}')\"")
+terminal.paste("python3 -c \"import sys; print(f'Python {sys.version}')\"")
 result = terminal.enter()
 print(result.output)
 

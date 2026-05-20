@@ -14,6 +14,23 @@ from PIL import ImageFont as PILFont
 from nowbox.types import RecordingMetadata, RecordingOptions
 from nowbox.utils import chunks, command_text, strip_ansi
 
+Color = tuple[int, int, int]
+StyledLine = list[tuple[str, Color]]
+StyledScreen = list[StyledLine]
+
+_DEFAULT_FG: Color = (212, 212, 212)
+
+_ANSI_COLORS: dict[int, Color] = {
+    30: (0, 0, 0),        31: (205, 49, 49),
+    32: (13, 188, 121),   33: (229, 229, 16),
+    34: (36, 114, 200),   35: (188, 63, 188),
+    36: (17, 168, 205),   37: (229, 229, 229),
+    90: (102, 102, 102),  91: (241, 76, 76),
+    92: (35, 209, 139),   93: (245, 245, 67),
+    94: (59, 142, 234),   95: (214, 112, 214),
+    96: (41, 184, 219),   97: (229, 229, 229),
+}
+
 # ---------------------------------------------------------------------------
 # Normalization
 # ---------------------------------------------------------------------------
@@ -124,10 +141,10 @@ def record_terminal_mp4(
     frames = build_terminal_frames(events, options)
     with tempfile.TemporaryDirectory() as tmp:
         frame_dir = Path(tmp)
-        for index, (text, key) in enumerate(frames):
+        for index, (styled, key) in enumerate(frames):
             frame_path = frame_dir / f"frame-{index:04d}.png"
             write_frame(
-                text,
+                styled,
                 frame_path,
                 width=options.width,
                 height=options.height,
@@ -169,7 +186,7 @@ _TITLE_BAR_HEIGHT = 38
 _KEYBOARD_HEIGHT = 130
 
 
-def build_terminal_frames(events: list[tuple[float, str, str]], options: RecordingOptions) -> list[tuple[str, str | None]]:
+def build_terminal_frames(events: list[tuple[float, str, str]], options: RecordingOptions) -> list[tuple[StyledScreen, str | None]]:
     font = _load_font(options.font_size)
     char_w = max(1, int(font.getlength("M")))
     ascent, descent = font.getmetrics()
@@ -179,25 +196,24 @@ def build_terminal_frames(events: list[tuple[float, str, str]], options: Recordi
     cols = max(20, (options.width - pad_x * 2) // char_w)
     rows = max(5, (terminal_height - pad_y * 2) // line_height)
     state = TerminalScreen(cols=cols, rows=rows)
-    frames: list[tuple[str, str | None]] = [(state.render(cursor=True), None)]
+    frames: list[tuple[StyledScreen, str | None]] = [(state.render_styled(cursor=True), None)]
     for i, (_, stream, text) in enumerate(events):
-        cleaned = strip_ansi(text)
+        # strip ANSI only for keyboard input (keystrokes have no color intent)
+        cleaned = strip_ansi(text) if stream == "k" else text
         if stream == "k":
             for char in cleaned:
                 key = _key_label(char)
                 state.write(char)
-                frames.extend([(state.render(cursor=True), key)] * _key_hold_frames(key))
+                frames.extend([(state.render_styled(cursor=True), key)] * _key_hold_frames(key))
         elif stream == "p":
-            # animate paste as a quick fill across ~4 frames
             chunk_size = max(1, len(cleaned) // 4)
             for chunk in chunks(cleaned, chunk_size):
                 state.write(chunk)
-                frames.append((state.render(cursor=True), None))
+                frames.append((state.render_styled(cursor=True), None))
         else:
             for chunk in chunks(cleaned, 12):
                 state.write(chunk)
-                frames.append((state.render(cursor=True), None))
-            # pause after output before the next command so each result is readable
+                frames.append((state.render_styled(cursor=True), None))
             next_stream = events[i + 1][1] if i + 1 < len(events) else None
             if next_stream in ("p", "k"):
                 frames.extend([(frames[-1][0], None)] * 6)
@@ -245,34 +261,56 @@ class TerminalScreen:
     def __init__(self, *, cols: int, rows: int) -> None:
         self.cols = cols
         self.rows = rows
-        self.lines: list[str] = [""]
+        self.lines: list[StyledLine] = [[]]
+        self._color: Color = _DEFAULT_FG
 
     def write(self, text: str) -> None:
-        for char in text:
-            if char == "\r":
+        i = 0
+        while i < len(text):
+            ch = text[i]
+            # ANSI escape: ESC [
+            if ch == "\x1b" and i + 1 < len(text) and text[i + 1] == "[":
+                j = i + 2
+                while j < len(text) and text[j] not in "ABCDEFGHJKSTfmnsulh":
+                    j += 1
+                if j < len(text) and text[j] == "m":
+                    for part in text[i + 2 : j].split(";"):
+                        n = int(part) if part else 0
+                        self._color = _ANSI_COLORS.get(n, _DEFAULT_FG) if n != 0 else _DEFAULT_FG
+                i = j + 1
                 continue
-            if char == "\n":
-                self.lines.append("")
+            if ch == "\r":
+                i += 1
                 continue
-            if char in {"\b", "\x7f"}:
-                self.lines[-1] = self.lines[-1][:-1]
+            if ch == "\n":
+                self.lines.append([])
+                i += 1
                 continue
-            if char == "\t":
-                self.lines[-1] += "    "
-            elif char.isprintable():
-                self.lines[-1] += char
+            if ch in {"\b", "\x7f"}:
+                if self.lines[-1]:
+                    self.lines[-1].pop()
+                i += 1
+                continue
+            cells: list[tuple[str, Color]] = [(" ", self._color)] * 4 if ch == "\t" else ([(ch, self._color)] if ch.isprintable() else [])
+            self.lines[-1].extend(cells)
             while len(self.lines[-1]) > self.cols:
                 overflow = self.lines[-1][self.cols :]
                 self.lines[-1] = self.lines[-1][: self.cols]
                 self.lines.append(overflow)
             if len(self.lines) > self.rows:
                 self.lines = self.lines[-self.rows :]
+            i += 1
+
+    def render_styled(self, *, cursor: bool = False) -> StyledScreen:
+        visible: list[StyledLine] = [list(line) for line in self.lines[-self.rows :]]
+        if cursor:
+            if not visible:
+                visible = [[]]
+            visible[-1] = [*visible[-1], ("_", _DEFAULT_FG)]
+        return visible
 
     def render(self, *, cursor: bool = False) -> str:
-        visible = self.lines[-self.rows :]
-        if cursor:
-            visible = [*visible[:-1], f"{visible[-1]}_"]
-        return "\n".join(visible)
+        return "\n".join("".join(ch for ch, _ in line) for line in self.render_styled(cursor=cursor))
 
 
 # ---------------------------------------------------------------------------
@@ -292,7 +330,7 @@ def _load_font(size: int) -> PILFont.FreeTypeFont:
 
 
 def write_frame(
-    text: str,
+    content: str | StyledScreen,
     path: Path,
     *,
     width: int,
@@ -314,11 +352,12 @@ def write_frame(
     max_cols = max(1, (width - pad_x * 2) // max(1, char_w))
     max_lines = max(1, (terminal_height - pad_y * 2) // max(1, line_height))
 
-    lines: list[str] = []
-    for raw_line in text.splitlines():
-        lines.append(raw_line[:max_cols])
-        if len(lines) >= max_lines:
-            break
+    # Normalise to StyledScreen
+    styled_lines: StyledScreen
+    if isinstance(content, str):
+        styled_lines = [[(ch, _DEFAULT_FG) for ch in raw[:max_cols]] for raw in content.splitlines()[:max_lines]]
+    else:
+        styled_lines = [line[:max_cols] for line in content[:max_lines]]
 
     img = Image.new("RGB", (width, height), (30, 30, 30))
     draw = ImageDraw.Draw(img)
@@ -342,10 +381,13 @@ def write_frame(
     title_w = int(title_font.getlength(title))
     draw.text(((width - title_w) // 2, title_y), title, font=title_font, fill=(160, 160, 160))
 
-    # Terminal text
-    for row, line in enumerate(lines):
+    # Terminal text (styled)
+    for row, line in enumerate(styled_lines):
         y = terminal_top + pad_y + row * line_height
-        draw.text((pad_x, y), line, font=font, fill=(212, 212, 212))
+        x = pad_x
+        for ch, color in line:
+            draw.text((x, y), ch, font=font, fill=color)
+            x += char_w
 
     if show_keyboard:
         _draw_keyboard(draw, width, height, keyboard_key, font_size)
