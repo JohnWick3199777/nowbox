@@ -167,7 +167,9 @@ class SandboxTerminal:
 
     def _ensure_prompt(self) -> None:
         if not self._line_started:
-            self._record("o", f"{self._cwd_label()} $ ")
+            cwd = self._cwd_label()
+            # cyan dir, reset, yellow $, reset
+            self._record("o", f"\x1b[36m{cwd}\x1b[0m \x1b[33m$\x1b[0m ")
             self._line_started = True
 
     def _record(self, stream: str, text: str) -> None:
