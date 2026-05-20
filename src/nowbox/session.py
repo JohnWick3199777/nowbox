@@ -102,6 +102,7 @@ class TerminalSession:
 
     def type(self, text: str) -> TerminalSession:
         """Send *text* as keystrokes, recording each character."""
+        self._terminal._ensure_prompt()
         for ch in text:
             self._terminal._record("k", ch)
         self._send(text)
@@ -109,6 +110,7 @@ class TerminalSession:
 
     def paste(self, text: str) -> TerminalSession:
         """Send *text* as a paste event (single recording entry)."""
+        self._terminal._ensure_prompt()
         self._terminal._record("p", text)
         self._send(text)
         return self
@@ -123,6 +125,7 @@ class TerminalSession:
         if k in {"enter", "return"}:
             self._terminal._record("k", "\n")
             self._send("\n")
+            self._terminal._line_started = False
         elif k == "tab":
             self._terminal._record("k", "\t")
             self._send("\t")
@@ -167,6 +170,8 @@ class TerminalSession:
         output = "\n".join(output_lines).strip()
         if output:
             self._terminal._record("o", output + "\n")
+        # Reset so the next type()/paste() call emits a fresh prompt.
+        self._terminal._line_started = False
         return output
 
     def run(self, command: str, *, timeout: float = 30.0) -> str:
