@@ -37,8 +37,11 @@ class AppleContainerSandbox(Sandbox):
 
     def start(self) -> None:
         """Pull the image and start a detached container."""
+        # Clean up any leftover container with the same name before starting.
+        subprocess.run(["container", "stop", self._name], capture_output=True)
+        subprocess.run(["container", "delete", self._name], capture_output=True)
         subprocess.run(
-            ["container", "run", "--name", self._name, "--detach", self._image, "--", "sleep", "infinity"], check=True, capture_output=True, text=True
+            ["container", "run", "--name", self._name, "--detach", self._image, "sleep", "infinity"], check=True, capture_output=True, text=True
         )
         self._status = "running"
 
@@ -114,7 +117,7 @@ class AppleContainerSandbox(Sandbox):
         if env:
             for k, v in env.items():
                 args += ["--env", f"{k}={v}"]
-        args += [self._name, "--"]
+        args += [self._name]
         if isinstance(command, list):
             args += command
         else:

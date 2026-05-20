@@ -1,10 +1,12 @@
+from pathlib import Path
+
 from nowbox import AppleContainerSandbox
 
 sandbox = AppleContainerSandbox("python:3.13", name="nowbox-example")
 sandbox.start()
 
 terminal = sandbox.terminal
-terminal.start_record(sandbox.root / "artifacts" / "terminal.mp4")
+terminal.start_record(Path("artifacts/terminal.mp4"))
 
 terminal.type("python --version")
 result = terminal.enter()
@@ -23,6 +25,6 @@ result = terminal.enter()
 print(result.output)
 
 terminal.stop_record()
-print(f"Recording saved to: {sandbox.root / 'artifacts' / 'terminal.mp4'}")
+print(f"Recording saved to: {Path('artifacts/terminal.mp4')}")
 
 sandbox.stop()
