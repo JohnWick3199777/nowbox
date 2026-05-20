@@ -1,3 +1,5 @@
+import subprocess
+
 from nowbox import LocalSandbox as Sandbox
 
 sandbox = Sandbox(name="example")
@@ -16,11 +18,7 @@ terminal.paste("python -c \"import os; print(f'CPUs: {os.cpu_count()}')\"")
 result = terminal.enter()
 print(result.output)
 
-terminal.paste(
-    'python -c "'
-    "import shutil; t,u,f = shutil.disk_usage('/');"
-    " print(f'Disk: {t//(1<<30)}GB total, {f//(1<<30)}GB free')\""
-)
+terminal.paste("python -c \"import shutil; t,u,f = shutil.disk_usage('/'); print(f'Disk: {t//(1<<30)}GB total, {f//(1<<30)}GB free')\"")
 result = terminal.enter()
 print(result.output)
 
@@ -29,4 +27,6 @@ result = terminal.enter()
 print(result.output)
 
 terminal.stop_record()
-print(f"Recording saved to: {sandbox.root / 'artifacts' / 'terminal.mp4'}")
+recording = sandbox.root / "artifacts" / "terminal.mp4"
+print(f"Recording saved to: {recording}")
+subprocess.run(["open", str(recording)])

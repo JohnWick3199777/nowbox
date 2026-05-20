@@ -335,17 +335,6 @@ def write_frame(
     title_w = int(title_font.getlength(title))
     draw.text(((width - title_w) // 2, title_y), title, font=title_font, fill=(160, 160, 160))
 
-    # Metadata in title bar
-    if metadata is not None:
-        meta_font = _load_font(max(8, font_size - 8))
-        # Left: "name · backend · id"
-        left_label = f"{metadata.sandbox_name}  ·  {metadata.sandbox_backend}  ·  {metadata.sandbox_id}"
-        draw.text((76, title_y + 1), left_label, font=meta_font, fill=(110, 110, 110))
-        # Right: start timestamp (date + time, no tz offset)
-        ts = metadata.started_at[:19].replace("T", "  ")
-        ts_w = int(meta_font.getlength(ts))
-        draw.text((width - ts_w - 12, title_y + 1), ts, font=meta_font, fill=(110, 110, 110))
-
     # Terminal text
     for row, line in enumerate(lines):
         y = terminal_top + pad_y + row * line_height
@@ -354,7 +343,41 @@ def write_frame(
     if show_keyboard:
         _draw_keyboard(draw, width, height, keyboard_key, font_size)
 
+    if metadata is not None:
+        _draw_metadata_panel(draw, width, metadata, font_size)
+
     img.save(str(path))
+
+
+def _draw_metadata_panel(draw: ImageDraw.ImageDraw, width: int, metadata: RecordingMetadata, font_size: int) -> None:
+    font = _load_font(max(10, font_size - 3))
+    fa, fd = font.getmetrics()
+    line_h = fa + fd + 4
+
+    ts = metadata.started_at[:19].replace("T", "  ")
+    rows = [
+        ("sandbox", metadata.sandbox_name),
+        ("backend", metadata.sandbox_backend),
+        ("id", metadata.sandbox_id),
+        ("started", ts),
+    ]
+
+    pad = 12
+    label_col_w = max(int(font.getlength(label)) for label, _ in rows)
+    value_col_w = max(int(font.getlength(value)) for _, value in rows)
+    gap = 10
+    panel_w = pad * 2 + label_col_w + gap + value_col_w
+    panel_h = pad * 2 + line_h * len(rows) - 4
+
+    panel_x = width - panel_w - 16
+    panel_y = _TITLE_BAR_HEIGHT + 16
+
+    draw.rectangle([panel_x, panel_y, panel_x + panel_w, panel_y + panel_h], fill=(40, 40, 40), outline=(65, 65, 65))
+
+    for i, (label, value) in enumerate(rows):
+        y = panel_y + pad + i * line_h
+        draw.text((panel_x + pad, y), label, font=font, fill=(120, 120, 120))
+        draw.text((panel_x + pad + label_col_w + gap, y), value, font=font, fill=(210, 210, 210))
 
 
 def _draw_keyboard(draw: ImageDraw.ImageDraw, width: int, height: int, active_key: str | None, font_size: int) -> None:
