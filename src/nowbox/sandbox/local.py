@@ -15,12 +15,13 @@ from nowbox.utils import normalize_command
 
 
 class LocalSandbox(Sandbox):
-    def __init__(self, *, name: str = "local", root: str | os.PathLike[str] | None = None, id: str | None = None) -> None:
+    def __init__(self, *, name: str = "local", root: str | os.PathLike[str] | None = None, id: str | None = None, volumes: list[str] | None = None) -> None:
         self._name = name
         self._root = Path(root) if root is not None else Path.cwd()
         self._id = id or f"local-{uuid.uuid4().hex[:12]}"
         self._created_at = time.time()
         self._status: SandboxStatus = "running"
+        self._volumes = volumes or []
         self._terminal = SandboxTerminal(self)
 
     @property
@@ -38,6 +39,10 @@ class LocalSandbox(Sandbox):
     @property
     def platform(self) -> str | None:
         return _platform.platform()
+
+    @property
+    def volumes(self) -> list[str]:
+        return list(self._volumes)
 
     @property
     def root(self) -> Path:

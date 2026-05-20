@@ -49,6 +49,11 @@ class Sandbox(ABC):
         return None
 
     @property
+    def volumes(self) -> list[str]:
+        """Volume mount specs in ``host:container`` form, if any."""
+        return []
+
+    @property
     @abstractmethod
     def created_at(self) -> float:
         """Unix timestamp for when this sandbox was created."""
