@@ -180,7 +180,7 @@ def build_terminal_frames(events: list[tuple[float, str, str]], options: Recordi
     rows = max(5, (terminal_height - pad_y * 2) // line_height)
     state = TerminalScreen(cols=cols, rows=rows)
     frames: list[tuple[str, str | None]] = [(state.render(cursor=True), None)]
-    for _, stream, text in events:
+    for i, (_, stream, text) in enumerate(events):
         cleaned = strip_ansi(text)
         if stream == "k":
             for char in cleaned:
@@ -188,12 +188,19 @@ def build_terminal_frames(events: list[tuple[float, str, str]], options: Recordi
                 state.write(char)
                 frames.extend([(state.render(cursor=True), key)] * _key_hold_frames(key))
         elif stream == "p":
-            state.write(cleaned)
-            frames.append((state.render(cursor=True), None))
+            # animate paste as a quick fill across ~4 frames
+            chunk_size = max(1, len(cleaned) // 4)
+            for chunk in chunks(cleaned, chunk_size):
+                state.write(chunk)
+                frames.append((state.render(cursor=True), None))
         else:
             for chunk in chunks(cleaned, 12):
                 state.write(chunk)
                 frames.append((state.render(cursor=True), None))
+            # pause after output before the next command so each result is readable
+            next_stream = events[i + 1][1] if i + 1 < len(events) else None
+            if next_stream in ("p", "k"):
+                frames.extend([(frames[-1][0], None)] * 6)
     if len(frames) > 240:
         step = max(1, len(frames) // 240)
         frames = frames[::step]
