@@ -13,11 +13,11 @@ from nowbox.types import Command, RecordingOptions, SandboxResult
 from nowbox.utils import normalize_command, strip_ansi
 
 if TYPE_CHECKING:
-    from nowbox.sandbox import LocalSandbox
+    from nowbox.sandbox.base import Sandbox
 
 
 class SandboxTerminal:
-    def __init__(self, sandbox: LocalSandbox) -> None:
+    def __init__(self, sandbox: Sandbox) -> None:
         self._sandbox = sandbox
         self._recording_path: Path | None = None
         self._recording_started_at: float | None = None
@@ -60,12 +60,7 @@ class SandboxTerminal:
         return self.stop_recording()
 
     def run(
-        self,
-        command: Command,
-        *,
-        cwd: str | os.PathLike[str] | None = None,
-        env: dict[str, str] | None = None,
-        check: bool = False,
+        self, command: Command, *, cwd: str | os.PathLike[str] | None = None, env: dict[str, str] | None = None, check: bool = False
     ) -> SandboxResult:
         normalized = normalize_command(command)
         return self._type_command(normalized).enter(cwd=cwd, env=env, check=check)
@@ -86,12 +81,7 @@ class SandboxTerminal:
         return self
 
     def key(
-        self,
-        key: str,
-        *,
-        cwd: str | os.PathLike[str] | None = None,
-        env: dict[str, str] | None = None,
-        check: bool = False,
+        self, key: str, *, cwd: str | os.PathLike[str] | None = None, env: dict[str, str] | None = None, check: bool = False
     ) -> SandboxTerminal | SandboxResult:
         normalized = key.lower()
         if normalized in {"enter", "return"}:
@@ -111,13 +101,7 @@ class SandboxTerminal:
             return self.type(key)
         raise ValueError(f"unknown key: {key}")
 
-    def enter(
-        self,
-        *,
-        cwd: str | os.PathLike[str] | None = None,
-        env: dict[str, str] | None = None,
-        check: bool = False,
-    ) -> SandboxResult:
+    def enter(self, *, cwd: str | os.PathLike[str] | None = None, env: dict[str, str] | None = None, check: bool = False) -> SandboxResult:
         command = self._pending_command if self._pending_command is not None else self._pending_text
         if not command:
             self._ensure_prompt()
@@ -158,27 +142,23 @@ class SandboxTerminal:
         self._transcript.append(text)
 
     def _execute(
-        self,
-        command: list[str] | str,
-        *,
-        cwd: str | os.PathLike[str] | None = None,
-        env: dict[str, str] | None = None,
-        check: bool = False,
+        self, command: list[str] | str, *, cwd: str | os.PathLike[str] | None = None, env: dict[str, str] | None = None, check: bool = False
     ) -> SandboxResult:
         normalized = normalize_command(command)
         working_dir = Path(cwd) if cwd is not None else self._sandbox.root
+        exec_cmd, host_cwd = self._sandbox._build_exec(normalized, working_dir)
         started = time.monotonic()
         master_fd, slave_fd = pty.openpty()
         try:
             proc = subprocess.Popen(
-                normalized,
-                cwd=working_dir,
+                exec_cmd,
+                cwd=host_cwd,
                 env={**os.environ, **env} if env is not None else None,
                 stdin=slave_fd,
                 stdout=slave_fd,
                 stderr=slave_fd,
                 text=False,
-                shell=isinstance(normalized, str),
+                shell=isinstance(exec_cmd, str),
                 close_fds=True,
             )
             os.close(slave_fd)
@@ -230,7 +210,5 @@ class SandboxTerminal:
             output=strip_ansi(raw).strip(),
         )
         if check and not result.ok:
-            raise subprocess.CalledProcessError(
-                result.exit_code, result.command, output=result.stdout, stderr=result.stderr
-            )
+            raise subprocess.CalledProcessError(result.exit_code, result.command, output=result.stdout, stderr=result.stderr)
         return result
