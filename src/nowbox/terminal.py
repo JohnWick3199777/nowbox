@@ -63,6 +63,8 @@ class SandboxTerminal:
             ended_at=ended_at,
             duration_seconds=round(duration, 3),
             exit_codes=list(self._exit_codes),
+            image=self._sandbox.image,
+            platform=self._sandbox.platform,
         )
         if path.suffix == ".cast":
             write_cast(path, self._events, metadata)

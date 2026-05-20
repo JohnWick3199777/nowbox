@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import platform as _platform
 import subprocess
 import time
 import uuid
@@ -33,6 +34,10 @@ class LocalSandbox(Sandbox):
     @property
     def backend(self) -> str:
         return "local"
+
+    @property
+    def platform(self) -> str | None:
+        return _platform.platform()
 
     @property
     def root(self) -> Path:

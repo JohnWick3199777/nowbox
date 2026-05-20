@@ -361,6 +361,10 @@ def _draw_metadata_panel(draw: ImageDraw.ImageDraw, width: int, metadata: Record
         ("id", metadata.sandbox_id),
         ("started", ts),
     ]
+    if metadata.image is not None:
+        rows.insert(2, ("image", metadata.image))
+    if metadata.platform is not None:
+        rows.append(("platform", metadata.platform))
 
     pad = 12
     label_col_w = max(int(font.getlength(label)) for label, _ in rows)

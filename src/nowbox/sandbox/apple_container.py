@@ -73,6 +73,10 @@ class AppleContainerSandbox(Sandbox):
         return "apple-container"
 
     @property
+    def image(self) -> str | None:
+        return self._image
+
+    @property
     def root(self) -> Path:
         return self._root
 

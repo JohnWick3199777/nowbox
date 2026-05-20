@@ -18,6 +18,8 @@ class RecordingMetadata:
     ended_at: str  # ISO-8601 UTC
     duration_seconds: float
     exit_codes: list[int] = field(default_factory=list)
+    image: str | None = None
+    platform: str | None = None
 
 
 @dataclass(frozen=True)
