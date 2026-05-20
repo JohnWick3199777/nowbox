@@ -13,11 +13,11 @@ from nowbox.types import Command, RecordingOptions, SandboxResult
 from nowbox.utils import normalize_command, strip_ansi
 
 if TYPE_CHECKING:
-    from nowbox.sandbox import LocalSandbox
+    from nowbox.sandbox import Sandbox
 
 
 class SandboxTerminal:
-    def __init__(self, sandbox: LocalSandbox) -> None:
+    def __init__(self, sandbox: Sandbox) -> None:
         self._sandbox = sandbox
         self._recording_path: Path | None = None
         self._recording_started_at: float | None = None
@@ -167,18 +167,19 @@ class SandboxTerminal:
     ) -> SandboxResult:
         normalized = normalize_command(command)
         working_dir = Path(cwd) if cwd is not None else self._sandbox.root
+        exec_cmd, host_cwd = self._sandbox._build_exec(normalized, working_dir)
         started = time.monotonic()
         master_fd, slave_fd = pty.openpty()
         try:
             proc = subprocess.Popen(
-                normalized,
-                cwd=working_dir,
+                exec_cmd,
+                cwd=host_cwd,
                 env={**os.environ, **env} if env is not None else None,
                 stdin=slave_fd,
                 stdout=slave_fd,
                 stderr=slave_fd,
                 text=False,
-                shell=isinstance(normalized, str),
+                shell=isinstance(exec_cmd, str),
                 close_fds=True,
             )
             os.close(slave_fd)
