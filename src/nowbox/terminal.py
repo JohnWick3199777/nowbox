@@ -50,6 +50,7 @@ class SandboxTerminal:
         # persistent PTY
         self._pty_master: int = -1
         self._pty_proc: subprocess.Popen[bytes] | None = None
+        self._pty_has_input: bool = False  # True when PTY holds buffered text (e.g. after tab)
 
     # ------------------------------------------------------------------
     # PTY lifecycle
@@ -241,15 +242,21 @@ class SandboxTerminal:
             self._ensure_prompt()
             self._record("k", "\t")
             self._ensure_pty()
+            # Send buffered text to PTY first so bash has something to complete
+            if self._pending_text:
+                self._pty_send(self._pending_text)
+                self._pty_drain(timeout=0.05)
             self._pty_send("\t")
             time.sleep(0.15)
             expanded = self._pty_drain(timeout=0.4)
             if expanded:
                 self._record("o", expanded)
-                # Append any visible expansion to pending_text
                 visible = strip_ansi(expanded).rstrip("\r\n")
                 if visible and not visible.startswith("\x07"):  # ignore bell-only responses
                     self._pending_text += visible.lstrip(self._pending_text[-len(visible):] if self._pending_text else "")
+                    self._pending_command = self._pending_text
+            # PTY now holds the (possibly expanded) line; enter() only needs to send \n
+            self._pty_has_input = True
             return self
         if len(key) == 1:
             return self.type(key)
@@ -264,7 +271,7 @@ class SandboxTerminal:
         self._pending_text = ""
         self._pending_command = None
 
-        if not command:
+        if not command and not self._pty_has_input:
             return SandboxResult(
                 sandbox_id=self._sandbox.id,
                 command="",
@@ -291,12 +298,16 @@ class SandboxTerminal:
             if m and m.group(2):
                 self._current_cwd = Path(m.group(2))
 
-        # Prefix env vars inline if provided
-        if env:
-            prefix = " ".join(f"{k}={shlex.quote(v)}" for k, v in env.items())
-            cmd_str = f"{prefix} {cmd_str}"
-
-        self._pty_send(cmd_str + "\n")
+        if self._pty_has_input:
+            # PTY already holds the line from tab completion; just press enter
+            self._pty_has_input = False
+            self._pty_send("\n")
+        else:
+            # Prefix env vars inline if provided
+            if env:
+                prefix = " ".join(f"{k}={shlex.quote(v)}" for k, v in env.items())
+                cmd_str = f"{prefix} {cmd_str}"
+            self._pty_send(cmd_str + "\n")
         raw = self._pty_read_until_sentinel(timeout=30)
         self._pty_drain(timeout=0.1)
         duration = time.monotonic() - started
