@@ -8,7 +8,6 @@ import urllib.request
 from pathlib import Path
 
 _DISCORD_MAX_BYTES = 25 * 1024 * 1024  # 25 MB hard limit
-_DISCORD_COLOR = 0x5865F2  # blurple
 
 
 class DiscordPublisher:
@@ -41,14 +40,17 @@ class DiscordPublisher:
 
         meta = _load_meta(path)
         payload: dict = {}
+        content_parts = []
         if message:
-            payload["content"] = message
+            content_parts.append(message)
+        if meta:
+            content_parts.append(_format_meta_text(meta))
+        if content_parts:
+            payload["content"] = "\n".join(content_parts)
         if username:
             payload["username"] = username
         if avatar_url:
             payload["avatar_url"] = avatar_url
-        if meta:
-            payload["embeds"] = [_build_embed(meta, path)]
 
         mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         boundary = "----NowboxBoundary"
@@ -71,7 +73,7 @@ class DiscordPublisher:
 
 
 def _load_meta(path: Path) -> dict | None:
-    sidecar = path.with_suffix(path.suffix + ".meta.json")
+    sidecar = path.with_suffix(".meta.json")
     if sidecar.exists():
         try:
             return json.loads(sidecar.read_text(encoding="utf-8"))
@@ -80,33 +82,24 @@ def _load_meta(path: Path) -> dict | None:
     return None
 
 
-def _build_embed(meta: dict, path: Path) -> dict:
-    fields = []
-
+def _format_meta_text(meta: dict) -> str:
+    lines = []
     if name := meta.get("sandbox_name"):
-        fields.append({"name": "Sandbox", "value": f"`{name}`", "inline": True})
+        lines.append(f"**sandbox** `{name}`")
     if sid := meta.get("sandbox_id"):
-        fields.append({"name": "ID", "value": f"`{sid}`", "inline": True})
+        lines.append(f"**id** `{sid}`")
     if backend := meta.get("sandbox_backend"):
-        fields.append({"name": "Backend", "value": backend, "inline": True})
+        lines.append(f"**backend** {backend}")
     if image := meta.get("image"):
-        fields.append({"name": "Image", "value": f"`{image}`", "inline": False})
+        lines.append(f"**image** `{image}`")
     if (dur := meta.get("duration_seconds")) is not None:
-        fields.append({"name": "Duration", "value": f"{dur:.1f}s", "inline": True})
+        lines.append(f"**duration** {dur:.1f}s")
     if codes := meta.get("exit_codes"):
-        indicators = " ".join("✅" if c == 0 else f"❌ ({c})" for c in codes)
-        fields.append({"name": "Exit codes", "value": indicators, "inline": True})
-    if platform := meta.get("platform"):
-        fields.append({"name": "Platform", "value": platform, "inline": True})
-
-    embed: dict = {
-        "title": path.name,
-        "color": _DISCORD_COLOR,
-        "fields": fields,
-    }
+        indicators = " ".join("✅" if c == 0 else f"❌ `{c}`" for c in codes)
+        lines.append(f"**exit codes** {indicators}")
     if started := meta.get("started_at"):
-        embed["timestamp"] = started[:26].rstrip("Z") + "+00:00" if not started.endswith("+00:00") else started
-    return embed
+        lines.append(f"**started** {started[:19].replace('T', ' ')} UTC")
+    return "\n".join(lines)
 
 
 def _build_multipart(path: Path, payload: dict, mime: str, boundary: str) -> bytes:

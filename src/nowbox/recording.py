@@ -221,7 +221,7 @@ def record_terminal_mp4(
 def write_meta(path: Path, metadata: RecordingMetadata) -> None:
     """Write a JSON sidecar next to the recording for use by publishers."""
     import dataclasses
-    meta_path = path.with_suffix(path.suffix + ".meta.json")
+    meta_path = path.with_suffix(".meta.json")
     meta_path.write_text(json.dumps(dataclasses.asdict(metadata), indent=2), encoding="utf-8")
 
 
