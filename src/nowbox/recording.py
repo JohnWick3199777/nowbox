@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import json
 import shutil
 import subprocess
@@ -320,6 +321,7 @@ class TerminalScreen:
 _MONO_FONT_PATHS = ["/System/Library/Fonts/SFNSMono.ttf", "/System/Library/Fonts/Menlo.ttc", "/System/Library/Fonts/Monaco.ttf"]
 
 
+@functools.lru_cache(maxsize=16)
 def _load_font(size: int) -> PILFont.FreeTypeFont:
     for path in _MONO_FONT_PATHS:
         try:
