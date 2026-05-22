@@ -319,9 +319,8 @@ class SandboxTerminal:
         if m and m.group(2):
             self._current_cwd = Path(m.group(2))
 
-        # Parse output: normalise newlines (handle \r\r\n from nested PTY),
-        # take everything before the sentinel line. Echo is disabled so there
-        # is no command echo to skip.
+        # Parse output for SandboxResult: normalise all \r variants to \n,
+        # take everything before the sentinel line.
         normalised = raw.replace("\r\r\n", "\n").replace("\r\n", "\n").replace("\r", "\n")
         output_lines: list[str] = []
         for line in normalised.split("\n"):
@@ -330,7 +329,13 @@ class SandboxTerminal:
             output_lines.append(line)
         output = "\n".join(output_lines).strip()
 
-        if output:
+        # For the recording, preserve \r so TerminalScreen can overwrite in place
+        # (e.g. progress bars). Only strip \r\r\n → \r and stop at the sentinel.
+        raw_for_recording = raw.replace("\r\r\n", "\r").split(_SENTINEL_PREFIX)[0]
+        if raw_for_recording:
+            self._record("o", raw_for_recording)
+        elif output:
+            # fallback: no raw PTY data but we have normalised output
             self._record("o", output + "\n")
         if self._recording_path is not None:
             self._exit_codes.append(exit_code)
