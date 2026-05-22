@@ -54,7 +54,10 @@ class DiscordPublisher:
             self.webhook_url,
             data=body,
             method="POST",
-            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+            headers={
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+                "User-Agent": "nowbox (https://github.com/JohnWick3199777/nowbox)",
+            },
         )
         try:
             urllib.request.urlopen(req)
