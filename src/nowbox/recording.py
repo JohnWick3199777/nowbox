@@ -325,6 +325,7 @@ class TerminalScreen:
         self.rows = rows
         self.lines: list[StyledLine] = [[]]
         self._color: Color = _DEFAULT_FG
+        self._col: int = 0  # cursor column on the current (last) line
 
     def write(self, text: str) -> None:
         i = 0
@@ -342,25 +343,36 @@ class TerminalScreen:
                 i = j + 1
                 continue
             if ch == "\r":
+                self._col = 0  # move cursor to column 0, stay on current line
                 i += 1
                 continue
             if ch == "\n":
                 self.lines.append([])
+                self._col = 0
+                if len(self.lines) > self.rows:
+                    self.lines = self.lines[-self.rows:]
                 i += 1
                 continue
             if ch in {"\b", "\x7f"}:
-                if self.lines[-1]:
-                    self.lines[-1].pop()
+                self._col = max(0, self._col - 1)
                 i += 1
                 continue
             cells: list[tuple[str, Color]] = [(" ", self._color)] * 4 if ch == "\t" else ([(ch, self._color)] if ch.isprintable() else [])
-            self.lines[-1].extend(cells)
-            while len(self.lines[-1]) > self.cols:
-                overflow = self.lines[-1][self.cols :]
-                self.lines[-1] = self.lines[-1][: self.cols]
-                self.lines.append(overflow)
-            if len(self.lines) > self.rows:
-                self.lines = self.lines[-self.rows :]
+            for cell in cells:
+                # Pad line to cursor position if needed
+                while len(self.lines[-1]) < self._col:
+                    self.lines[-1].append((" ", _DEFAULT_FG))
+                if self._col < len(self.lines[-1]):
+                    self.lines[-1][self._col] = cell  # overwrite existing cell
+                else:
+                    self.lines[-1].append(cell)
+                self._col += 1
+                # Wrap at column boundary
+                if self._col >= self.cols:
+                    self.lines.append([])
+                    self._col = 0
+                    if len(self.lines) > self.rows:
+                        self.lines = self.lines[-self.rows:]
             i += 1
 
     def render_styled(self, *, cursor: bool = False) -> StyledScreen:
