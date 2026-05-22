@@ -42,7 +42,7 @@ class AppleContainerSandbox(Sandbox):
     def start(self) -> None:
         """Pull the image and start a detached container."""
         # Clean up any leftover container with the same name before starting.
-        subprocess.run(["container", "stop", self._name], capture_output=True)
+        subprocess.run(["container", "stop", "--time", "1", self._name], capture_output=True)
         subprocess.run(["container", "delete", self._name], capture_output=True)
         cmd = ["container", "run", "--name", self._name, "--label", _NOWBOX_LABEL, "--detach"]
         for v in self._volumes:
@@ -54,12 +54,12 @@ class AppleContainerSandbox(Sandbox):
 
     def _atexit_cleanup(self) -> None:
         if self._status == "running":
-            subprocess.run(["container", "stop", self._name], capture_output=True)
+            subprocess.run(["container", "stop", "--time", "1", self._name], capture_output=True)
             subprocess.run(["container", "delete", self._name], capture_output=True)
 
     def stop(self) -> None:
         """Stop and delete the container."""
-        subprocess.run(["container", "stop", self._name], capture_output=True)
+        subprocess.run(["container", "stop", "--time", "1", self._name], capture_output=True)
         subprocess.run(["container", "delete", self._name], capture_output=True)
         self._status = "stopped"
 
