@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import functools
+import hashlib
 import json
+import multiprocessing
+import os
+import pickle
 import shutil
 import subprocess
 import tempfile
 import textwrap
 import time
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 from PIL import Image, ImageDraw
@@ -131,6 +136,20 @@ def _write_text_mp4(*, text: str, path: Path, options: RecordingOptions) -> Path
 # Terminal MP4 (event-driven)
 # ---------------------------------------------------------------------------
 
+# Module-level so ProcessPoolExecutor (spawn) can pickle it.
+def _render_frame_worker(args: tuple) -> None:
+    styled, key, path_str, width, height, font_size, metadata = args
+    write_frame(
+        styled,
+        Path(path_str),
+        width=width,
+        height=height,
+        font_size=font_size,
+        keyboard_key=key,
+        show_keyboard=True,
+        metadata=metadata,
+    )
+
 
 def record_terminal_mp4(
     *, events: list[tuple[float, str, str]], path: Path, options: RecordingOptions, metadata: RecordingMetadata | None = None
@@ -140,22 +159,57 @@ def record_terminal_mp4(
         raise RuntimeError("MP4 recording requires ffmpeg on PATH")
     path.parent.mkdir(parents=True, exist_ok=True)
     frames = build_terminal_frames(events, options)
+    fps = 8
+    frame_duration = 1.0 / fps
+
     with tempfile.TemporaryDirectory() as tmp:
         frame_dir = Path(tmp)
-        for index, (styled, key) in enumerate(frames):
-            frame_path = frame_dir / f"frame-{index:04d}.png"
-            write_frame(
-                styled,
-                frame_path,
-                width=options.width,
-                height=options.height,
-                font_size=options.font_size,
-                keyboard_key=key,
-                show_keyboard=True,
-                metadata=metadata,
-            )
+
+        # Deduplicate: hash each (styled, key) so identical frames share one PNG.
+        # Then render all unique frames in parallel across available CPUs.
+        hash_to_path: dict[bytes, Path] = {}
+        unique_render_args: list[tuple] = []
+        frame_file_paths: list[Path] = []
+
+        for styled, key in frames:
+            fhash = hashlib.md5(pickle.dumps((styled, key))).digest()
+            if fhash not in hash_to_path:
+                idx = len(hash_to_path)
+                frame_path = frame_dir / f"frame-{idx:04d}.png"
+                hash_to_path[fhash] = frame_path
+                unique_render_args.append((
+                    styled, key, str(frame_path),
+                    options.width, options.height, options.font_size, metadata,
+                ))
+            frame_file_paths.append(hash_to_path[fhash])
+
+        workers = min(os.cpu_count() or 4, len(unique_render_args))
+        # fork avoids re-importing __main__ (which causes issues on macOS spawn)
+        _ctx = multiprocessing.get_context("fork")
+        with ProcessPoolExecutor(max_workers=workers, mp_context=_ctx) as pool:
+            list(pool.map(_render_frame_worker, unique_render_args, chunksize=max(1, len(unique_render_args) // workers)))
+
+        # Build concat file: group consecutive identical frames into one entry
+        # with a summed duration so ffmpeg doesn't need duplicate file references.
+        concat_lines = ["ffconcat version 1.0"]
+        i = 0
+        last_file = frame_file_paths[0]
+        while i < len(frame_file_paths):
+            fp = frame_file_paths[i]
+            j = i + 1
+            while j < len(frame_file_paths) and frame_file_paths[j] == fp:
+                j += 1
+            concat_lines.append(f"file '{fp}'")
+            concat_lines.append(f"duration {(j - i) * frame_duration:.6f}")
+            last_file = fp
+            i = j
+        concat_lines.append(f"file '{last_file}'")  # ffmpeg concat quirk: repeat last
+
+        concat_path = frame_dir / "concat.txt"
+        concat_path.write_text("\n".join(concat_lines))
+
         subprocess.run(
-            [ffmpeg, "-y", "-framerate", "8", "-i", str(frame_dir / "frame-%04d.png"), "-pix_fmt", "yuv420p", str(path)],
+            [ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", str(concat_path), "-pix_fmt", "yuv420p", str(path)],
             check=True,
             capture_output=True,
             text=True,
