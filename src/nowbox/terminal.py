@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from nowbox.recording import record_terminal_mp4, write_cast
+from nowbox.recording import record_terminal_mp4, write_cast, write_meta
 from nowbox.types import Command, RecordingMetadata, RecordingOptions, SandboxResult
 from nowbox.utils import normalize_command, strip_ansi
 
@@ -193,6 +193,7 @@ class SandboxTerminal:
             write_cast(path, self._events, metadata)
         else:
             record_terminal_mp4(events=self._events, path=path, options=RecordingOptions(path=path), metadata=metadata)
+        write_meta(path, metadata)
         self._recording_path = None
         self._recording_started_at = None
         self._recording_started_at_iso = None
