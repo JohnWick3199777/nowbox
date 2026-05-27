@@ -1,0 +1,30 @@
+# nowbox instrumented ZSH — preexec/precmd hooks for stdout capture + sentinel
+
+_NOWBOX_SEQ=0
+_NOWBOX_ORIG_OUT=-1
+_NOWBOX_ORIG_ERR=-1
+
+# Called BEFORE each user command: redirect stdout+stderr through tee so xterm
+# still displays output while we also write it to /tmp/.nowbox_stdout.
+preexec() {
+    > /tmp/.nowbox_stdout
+    exec {_NOWBOX_ORIG_OUT}>&1 {_NOWBOX_ORIG_ERR}>&2
+    exec 1> >(tee /tmp/.nowbox_stdout >&"$_NOWBOX_ORIG_OUT") \
+         2> >(tee -a /tmp/.nowbox_stdout >&"$_NOWBOX_ORIG_ERR")
+}
+
+# Called AFTER each user command: restore stdout/stderr, write sentinel file.
+# Sentinel format: "<seq> <exit_code> <cwd>"
+precmd() {
+    local rc=$?
+    if [[ $_NOWBOX_ORIG_OUT -ne -1 ]]; then
+        exec 1>&"$_NOWBOX_ORIG_OUT" 2>&"$_NOWBOX_ORIG_ERR"
+        exec {_NOWBOX_ORIG_OUT}>&- {_NOWBOX_ORIG_ERR}>&-
+        _NOWBOX_ORIG_OUT=-1
+        _NOWBOX_ORIG_ERR=-1
+    fi
+    _NOWBOX_SEQ=$((_NOWBOX_SEQ + 1))
+    printf "%d %d %s\n" "$_NOWBOX_SEQ" "$rc" "$PWD" > /tmp/.nowbox_sentinel
+}
+
+PROMPT='%F{cyan}%~%f %F{yellow}$%f '
