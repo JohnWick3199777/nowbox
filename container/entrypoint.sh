@@ -20,6 +20,7 @@ ZDOTDIR=/etc/nowbox tmux new-session -d -s nowbox -x 160 -y 40 "zsh"
 exec xterm \
     -fa 'Mono' -fs 14 \
     -bg '#1e1e1e' -fg '#d4d4d4' \
-    -geometry 160x40+0+0 \
+    -geometry 156x38+20+20 \
+    -b 12 \
     -title 'nowbox' \
     -e tmux attach-session -t nowbox
