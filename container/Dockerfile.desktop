@@ -7,10 +7,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     x11vnc \
     xterm \
     zsh \
+    tmux \
+    scrot \
     && rm -rf /var/lib/apt/lists/*
 
 COPY entrypoint.sh /entrypoint.sh
-COPY zshrc /etc/nowbox/zshrc
+COPY .zshrc /etc/nowbox/.zshrc
 RUN chmod +x /entrypoint.sh
 
 EXPOSE 5900

@@ -107,6 +107,12 @@ class RFBClient:
                 if 0x20 <= cp <= 0xFF:
                     self.key_press(cp)
 
+    def mouse_click(self, x: int, y: int, button: int = 1) -> None:
+        """Send a mouse button press+release at (x, y). button=1 is left click."""
+        # PointerEvent: type(1B) button-mask(1B) x-position(2B) y-position(2B) = 6 bytes
+        self._send(struct.pack(">BBHH", 5, button, x, y))  # button down
+        self._send(struct.pack(">BBHH", 5, 0, x, y))       # button up
+
     def key_by_name(self, name: str) -> None:
         """Press a named key (case-insensitive). See _KEYSYM for supported names."""
         lower = name.lower()

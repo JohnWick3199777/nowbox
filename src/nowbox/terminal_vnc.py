@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from nowbox.recording import write_meta
-from nowbox.rfb import _KEYSYM, RFBClient
+from nowbox.rfb import RFBClient
 from nowbox.types import RecordingMetadata, SandboxResult
 from nowbox.utils import normalize_command, strip_ansi
 
@@ -33,11 +33,13 @@ class VNCTerminal:
     Public API mirrors ``SandboxTerminal`` for compatibility.
     """
 
-    def __init__(self, sandbox: DesktopSandbox, host: str = "127.0.0.1", port: int = 5900) -> None:
+    def __init__(self, sandbox: DesktopSandbox, host: str = "127.0.0.1", port: int = 5900, *, type_delay: float = 0.05) -> None:
         self._sandbox = sandbox
         self._host = host
         self._port = port
         self._rfb: RFBClient | None = None
+        # Seconds between keystrokes when typing — creates visible animation in recordings.
+        self._type_delay = type_delay
 
         # Sentinel tracking
         self._last_seq: int = 0
@@ -64,11 +66,22 @@ class VNCTerminal:
     # ------------------------------------------------------------------
 
     def _ensure_connected(self) -> None:
-        if self._rfb is None:
-            self._rfb = RFBClient(self._host, self._port)
-            self._rfb.connect()
-            # Wait for the ZSH precmd to fire at least once (initial prompt ready)
-            self._wait_sentinel(timeout=10)
+        if self._rfb is not None:
+            return
+        deadline = time.monotonic() + 15
+        last_err: Exception = RuntimeError("VNC not ready")
+        while time.monotonic() < deadline:
+            try:
+                rfb = RFBClient(self._host, self._port)
+                rfb.connect()
+                self._rfb = rfb
+                # Wait for ZSH precmd to fire at least once (initial prompt ready)
+                self._wait_sentinel(timeout=15)
+                return
+            except (ConnectionError, OSError) as exc:
+                last_err = exc
+                time.sleep(0.5)
+        raise TimeoutError(f"Could not connect to VNC terminal after 15s: {last_err}")
 
     def close(self) -> None:
         """Stop recording (if active) and close the VNC connection."""
@@ -175,25 +188,42 @@ class VNCTerminal:
                 self._pending_text = self._pending_text[:-1]
                 self._pending_command = self._pending_text
                 self._ensure_connected()
-                assert self._rfb is not None
-                self._rfb.key_press(_KEYSYM["backspace"])
+                subprocess.run(
+                    ["container", "exec", self._sandbox._name,
+                     "tmux", "send-keys", "-t", self._TMUX_SESSION, "BSpace"],
+                    capture_output=True,
+                )
             return self
         if lower == "tab":
             self._ensure_connected()
-            assert self._rfb is not None
             if self._pending_text:
-                self._rfb.type_text(self._pending_text)
+                self._tmux_send(self._pending_text)
                 self._pending_text = ""
-            self._rfb.key_press(_KEYSYM["tab"])
+            subprocess.run(
+                ["container", "exec", self._sandbox._name,
+                 "tmux", "send-keys", "-t", self._TMUX_SESSION, "Tab"],
+                capture_output=True,
+            )
             time.sleep(0.3)
             return self
-        if lower in _KEYSYM:
+        # Map common names to tmux key names
+        _TMUX_KEYS = {
+            "escape": "Escape", "up": "Up", "down": "Down", "left": "Left", "right": "Right",
+            "ctrl+c": "C-c", "ctrl+d": "C-d", "ctrl+z": "C-z",
+            "f1": "F1", "f2": "F2", "f3": "F3", "f4": "F4", "f5": "F5",
+            "f6": "F6", "f7": "F7", "f8": "F8", "f9": "F9", "f10": "F10",
+            "q": "q",
+        }
+        if lower in _TMUX_KEYS:
             self._ensure_connected()
-            assert self._rfb is not None
             if self._pending_text:
-                self._rfb.type_text(self._pending_text)
+                self._tmux_send(self._pending_text)
                 self._pending_text = ""
-            self._rfb.key_press(_KEYSYM[lower])
+            subprocess.run(
+                ["container", "exec", self._sandbox._name,
+                 "tmux", "send-keys", "-t", self._TMUX_SESSION, _TMUX_KEYS[lower]],
+                capture_output=True,
+            )
             return self
         if len(key) == 1:
             return self.type(key)
@@ -213,7 +243,8 @@ class VNCTerminal:
         cmd_str = (_cmd_text(command) if not isinstance(command, str) else command).strip()
 
         if cwd is not None and self._current_cwd != Path(cwd):
-            self._rfb.type_text(f"cd {cwd}\n")
+            import shlex as _shlex
+            self._tmux_send(f"cd {_shlex.quote(str(cwd))}", enter=True)
             self._wait_sentinel(timeout=8)
 
         if cmd_str:
@@ -221,18 +252,21 @@ class VNCTerminal:
                 import shlex
                 prefix = " ".join(f"{k}={shlex.quote(v)}" for k, v in env.items())
                 cmd_str = f"{prefix} {cmd_str}"
-            self._rfb.type_text(cmd_str + "\n")
+            self._tmux_send(cmd_str, enter=True)
         else:
-            self._rfb.key_press(_KEYSYM["return"])
+            self._tmux_send("", enter=True)
 
         seq, exit_code, new_cwd = self._wait_sentinel(timeout=30)
+        # Let the capture thread grab the settled output before the caller sends the next command.
+        if self.is_recording:
+            time.sleep(0.3)
         duration = time.monotonic() - started
 
         if new_cwd:
             self._current_cwd = Path(new_cwd)
 
-        # Read captured stdout from the container
-        stdout = self._sandbox._container_read_file("/tmp/.nowbox_stdout")
+        # stdout not captured from the visual terminal — use sandbox.run() for text output
+        stdout = ""
 
         if self._recording_path is not None:
             self._exit_codes.append(exit_code)
@@ -251,6 +285,39 @@ class VNCTerminal:
         if check and not result.ok:
             raise subprocess.CalledProcessError(result.exit_code, result.command, output=result.stdout)
         return result
+
+    # ------------------------------------------------------------------
+    # tmux input injection (PTY-direct, no X11 focus required)
+    # ------------------------------------------------------------------
+
+    _TMUX_SESSION = "nowbox"
+
+    def _tmux_send(self, text: str, *, enter: bool = False) -> None:
+        """Inject text (and optionally Enter) into the tmux session's PTY."""
+        if not text and not enter:
+            return
+        # tmux send-keys with a type delay simulates natural typing in the recording.
+        # When recording, send one character at a time with a sleep between each.
+        if self.is_recording and self._type_delay > 0 and text:
+            for ch in text:
+                subprocess.run(
+                    ["container", "exec", self._sandbox._name,
+                     "tmux", "send-keys", "-t", self._TMUX_SESSION, ch],
+                    capture_output=True,
+                )
+                time.sleep(self._type_delay)
+        elif text:
+            subprocess.run(
+                ["container", "exec", self._sandbox._name,
+                 "tmux", "send-keys", "-t", self._TMUX_SESSION, text],
+                capture_output=True,
+            )
+        if enter:
+            subprocess.run(
+                ["container", "exec", self._sandbox._name,
+                 "tmux", "send-keys", "-t", self._TMUX_SESSION, "Enter"],
+                capture_output=True,
+            )
 
     # ------------------------------------------------------------------
     # Sentinel polling
@@ -277,19 +344,22 @@ class VNCTerminal:
     # Background screenshot capture
     # ------------------------------------------------------------------
 
+    def _screenshot_bytes(self) -> bytes | None:
+        """Capture the current Xvfb display via scrot inside the container."""
+        r = subprocess.run(
+            ["container", "exec", "--env", "DISPLAY=:1", self._sandbox._name,
+             "scrot", "--silent", "-"],
+            capture_output=True,
+        )
+        return r.stdout if r.returncode == 0 and r.stdout else None
+
     def _capture_loop(self) -> None:
-        assert self._rfb is not None
         prev_hash: int | None = None
         while not self._stop_capture.is_set():
-            try:
-                img = self._rfb.screenshot()
-            except Exception:
-                time.sleep(0.1)
+            png_bytes = self._screenshot_bytes()
+            if png_bytes is None:
+                time.sleep(0.05)
                 continue
-            import io
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            png_bytes = buf.getvalue()
             h = hash(png_bytes)
             if h != prev_hash:
                 assert self._recording_started_at is not None
