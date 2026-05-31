@@ -265,8 +265,11 @@ class VNCTerminal:
         if new_cwd:
             self._current_cwd = Path(new_cwd)
 
-        # stdout not captured from the visual terminal — use sandbox.run() for text output
-        stdout = ""
+        # Capture stdout by re-running the command via container exec.
+        # The visual execution already completed; this only reads output.
+        exec_result = self._sandbox.run(command, cwd=self._current_cwd or self._sandbox.root, env=env)
+        stdout = exec_result.stdout
+        stderr = exec_result.stderr
 
         if self._recording_path is not None:
             self._exit_codes.append(exit_code)
@@ -276,7 +279,7 @@ class VNCTerminal:
             command=command,
             exit_code=exit_code,
             stdout=stdout,
-            stderr="",
+            stderr=stderr,
             duration_seconds=duration,
             cwd=self._current_cwd or self._sandbox.root,
             recording_path=self._recording_path,
