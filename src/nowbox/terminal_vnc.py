@@ -252,7 +252,9 @@ class VNCTerminal:
                 import shlex
                 prefix = " ".join(f"{k}={shlex.quote(v)}" for k, v in env.items())
                 cmd_str = f"{prefix} {cmd_str}"
-            self._tmux_send(cmd_str, enter=True)
+            # Wrap with tee so output is visible in the terminal recording AND
+            # captured to a file we can read back without re-running the command.
+            self._tmux_send(f"{{ {cmd_str}; }} 2>&1 | tee /tmp/.nowbox_stdout", enter=True)
         else:
             self._tmux_send("", enter=True)
 
@@ -265,11 +267,9 @@ class VNCTerminal:
         if new_cwd:
             self._current_cwd = Path(new_cwd)
 
-        # Capture stdout by re-running the command via container exec.
-        # The visual execution already completed; this only reads output.
-        exec_result = self._sandbox.run(command, cwd=self._current_cwd or self._sandbox.root, env=env)
-        stdout = exec_result.stdout
-        stderr = exec_result.stderr
+        # Read captured stdout from the tee file — no second execution needed.
+        stdout = self._sandbox._container_read_file("/tmp/.nowbox_stdout") if cmd_str else ""
+        stderr = ""
 
         if self._recording_path is not None:
             self._exit_codes.append(exit_code)
