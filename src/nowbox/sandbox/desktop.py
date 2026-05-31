@@ -10,7 +10,7 @@ from pathlib import Path
 
 from nowbox.sandbox.base import Sandbox
 from nowbox.types import Command, SandboxResult, SandboxStatus
-from nowbox.utils import normalize_command
+from nowbox.utils import normalize_command, strip_ansi
 
 _NOWBOX_LABEL = "nowbox.managed=true"
 
@@ -175,6 +175,7 @@ class DesktopSandbox(Sandbox):
             stderr=completed.stderr,
             duration_seconds=duration,
             cwd=working_dir,
+            output=strip_ansi(completed.stdout).strip(),
         )
         if check and not result.ok:
             raise subprocess.CalledProcessError(result.exit_code, result.command, output=result.stdout, stderr=result.stderr)
