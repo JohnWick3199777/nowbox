@@ -199,6 +199,9 @@ class DesktopSandbox(Sandbox):
     def _desktop_tmux_send_keys(self, keys: list[str]) -> None:
         self._desktop_tmux_command(["send-keys", "-t", "nowbox", *keys])
 
+    def _desktop_tmux_send_text(self, text: str) -> None:
+        self._desktop_tmux_command(["send-keys", "-t", "nowbox", "-l", text])
+
     def _desktop_tmux_command(self, args: list[str]) -> None:
         subprocess.run(["container", "exec", self._name, "tmux", *args], capture_output=True)
 

@@ -258,16 +258,11 @@ class VNCTerminal:
 
                 prefix = " ".join(f"{k}={shlex.quote(v)}" for k, v in env.items())
                 cmd_str = f"{prefix} {cmd_str}"
-            # Capture pane output while typing the user's original command into
-            # the visible terminal. This avoids leaking capture wrappers into
-            # recordings.
-            self._sandbox._desktop_tmux_command(["pipe-pane", "-o", "-t", self._TMUX_SESSION, "cat > /tmp/.nowbox_stdout"])
             self._tmux_send(cmd_str, enter=True)
         else:
             self._tmux_send("", enter=True)
 
         seq, exit_code, new_cwd = self._wait_sentinel(timeout=30)
-        self._sandbox._desktop_tmux_command(["pipe-pane", "-t", self._TMUX_SESSION])
         # Let the capture thread grab the settled output before the caller sends the next command.
         if self.is_recording:
             time.sleep(0.3)
@@ -276,9 +271,8 @@ class VNCTerminal:
         if new_cwd:
             self._current_cwd = Path(new_cwd)
 
-        # Read captured stdout from the tee file — no second execution needed.
         stdout = self._sandbox._container_read_file("/tmp/.nowbox_stdout") if cmd_str else ""
-        stderr = ""
+        stderr = self._sandbox._container_read_file("/tmp/.nowbox_stderr") if cmd_str else ""
 
         if self._recording_path is not None:
             self._exit_codes.append(exit_code)
@@ -295,7 +289,7 @@ class VNCTerminal:
             output=strip_ansi(stdout).strip(),
         )
         if check and not result.ok:
-            raise subprocess.CalledProcessError(result.exit_code, result.command, output=result.stdout)
+            raise subprocess.CalledProcessError(result.exit_code, result.command, output=result.stdout, stderr=result.stderr)
         return result
 
     # ------------------------------------------------------------------
@@ -312,10 +306,13 @@ class VNCTerminal:
         # When recording, send one character at a time with a sleep between each.
         if self.is_recording and self._type_delay > 0 and text:
             for ch in text:
-                self._sandbox._desktop_tmux_send_keys([ch])
+                if ch == " ":
+                    self._sandbox._desktop_tmux_send_keys(["Space"])
+                else:
+                    self._sandbox._desktop_tmux_send_text(ch)
                 time.sleep(self._type_delay)
         elif text:
-            self._sandbox._desktop_tmux_send_keys([text])
+            self._sandbox._desktop_tmux_send_text(text)
         if enter:
             self._sandbox._desktop_tmux_send_keys(["Enter"])
 

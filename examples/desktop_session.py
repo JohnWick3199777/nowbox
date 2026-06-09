@@ -27,20 +27,21 @@ from nowbox import DesktopMachineSandbox
 OUTPUT = Path("artifacts") / f"desktop-{datetime.now().strftime('%Y%m%d-%H%M%S')}.mp4"
 
 with DesktopMachineSandbox("nowbox-desktop-machine:latest") as sb:
-    # Programmatic execution - uses container machine run, no VNC
-    whoami = sb.run(["whoami"])
-    echo = sb.run(["echo", "hello from machine"])
-    print(f"whoami stdout: {whoami.stdout.strip()!r}")
-    print(f"echo stdout: {echo.stdout.strip()!r}")
-    assert whoami.ok
-    assert echo.ok
-
     # Visual terminal recording via VNC
     t = sb.terminal
     t.start_recording(OUTPUT)
 
-    t.type("whoami").key("enter")
-    t.type("echo 'hello from xterm'").key("enter")
+    commands = [
+        "whoami",
+        "pwd",
+        "uname -a",
+        "head -5 /etc/os-release",
+        "echo hello from xterm",
+    ]
+    for command in commands:
+        result = t.type(command).key("enter")
+        print(f"terminal {command!r} stdout: {result.stdout.strip()!r}")
+        print(f"terminal {command!r} stderr: {result.stderr.strip()!r}")
 
     path = t.stop_recording()
     print(f"Recording saved: {path}")
