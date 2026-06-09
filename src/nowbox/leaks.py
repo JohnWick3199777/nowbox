@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import subprocess
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 _NOWBOX_LABEL = "nowbox.managed"
 _MACOS_EPOCH_OFFSET = 978307200  # seconds between Unix epoch and macOS absolute time (2001-01-01)
@@ -46,7 +46,7 @@ def list_leaked_containers() -> list[LeakedContainer]:
         if started_raw is not None:
             try:
                 unix_ts = float(started_raw) + _MACOS_EPOCH_OFFSET
-                started_at = datetime.fromtimestamp(unix_ts, tz=timezone.utc)
+                started_at = datetime.fromtimestamp(unix_ts, tz=UTC)
             except (ValueError, OSError):
                 pass
         leaked.append(LeakedContainer(id=container_id, image=image, status=status, started_at=started_at))

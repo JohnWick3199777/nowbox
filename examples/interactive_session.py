@@ -3,6 +3,7 @@
 Run with:  uv run python examples/interactive_session.py
 """
 import subprocess
+
 from nowbox import LocalSandbox
 
 sandbox = LocalSandbox(name="session-demo")

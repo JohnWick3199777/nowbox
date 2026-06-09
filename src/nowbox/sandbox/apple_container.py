@@ -27,7 +27,9 @@ class AppleContainerSandbox(Sandbox):
             result = sb.run(["python", "--version"])
     """
 
-    def __init__(self, image: str, *, name: str | None = None, root: str | os.PathLike[str] = "/", id: str | None = None, volumes: list[str] | None = None) -> None:
+    def __init__(
+        self, image: str, *, name: str | None = None, root: str | os.PathLike[str] = "/", id: str | None = None, volumes: list[str] | None = None
+    ) -> None:
         self._image = image
         self._name = name or f"nowbox-{uuid.uuid4().hex[:12]}"
         self._root = Path(root)

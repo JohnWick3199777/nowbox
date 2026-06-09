@@ -7,10 +7,14 @@ import time
 import uuid
 from collections.abc import Mapping
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from nowbox.sandbox.base import Sandbox
 from nowbox.types import Command, SandboxResult, SandboxStatus
 from nowbox.utils import normalize_command, strip_ansi
+
+if TYPE_CHECKING:
+    from nowbox.terminal_vnc import VNCTerminal
 
 _NOWBOX_LABEL = "nowbox.managed=true"
 
@@ -51,7 +55,7 @@ class DesktopSandbox(Sandbox):
         self._status: SandboxStatus = "created"
         self._volumes = volumes or []
         self._vnc_port = vnc_port
-        self._terminal: object | None = None  # lazy — avoids circular import
+        self._terminal: VNCTerminal | None = None
 
     # --- lifecycle ---
 
@@ -93,7 +97,7 @@ class DesktopSandbox(Sandbox):
         """Stop and delete the container."""
         if self._terminal is not None:
             try:
-                self._terminal.close()  # type: ignore[union-attr]
+                self._terminal.close()
             except Exception:
                 pass
         subprocess.run(["container", "stop", "--time", "1", self._name], capture_output=True)

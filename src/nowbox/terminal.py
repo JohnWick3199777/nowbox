@@ -7,7 +7,7 @@ import select
 import shlex
 import subprocess
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -160,7 +160,7 @@ class SandboxTerminal:
     def start_recording(self, path: str | os.PathLike[str] | None = None) -> Path:
         self._recording_path = Path(path) if path is not None else self._sandbox.root / "artifacts" / "terminal.mp4"
         self._recording_started_at = time.monotonic()
-        self._recording_started_at_iso = datetime.now(timezone.utc).isoformat()
+        self._recording_started_at_iso = datetime.now(UTC).isoformat()
         self._events.clear()
         self._transcript.clear()
         self._exit_codes.clear()
@@ -176,7 +176,7 @@ class SandboxTerminal:
         path = self._recording_path
         if path is None:
             return None
-        ended_at = datetime.now(timezone.utc).isoformat()
+        ended_at = datetime.now(UTC).isoformat()
         duration = time.monotonic() - self._recording_started_at if self._recording_started_at is not None else 0.0
         metadata = RecordingMetadata(
             sandbox_id=self._sandbox.id,

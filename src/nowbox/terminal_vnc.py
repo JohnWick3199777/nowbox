@@ -10,15 +10,33 @@ import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Protocol, runtime_checkable
 
 from nowbox.recording import write_meta
 from nowbox.rfb import RFBClient
 from nowbox.types import RecordingMetadata, SandboxResult
 from nowbox.utils import normalize_command, strip_ansi
 
-if TYPE_CHECKING:
-    from nowbox.sandbox.desktop import DesktopSandbox
+
+@runtime_checkable
+class _VNCSandbox(Protocol):
+    @property
+    def id(self) -> str: ...
+    @property
+    def name(self) -> str: ...
+    @property
+    def backend(self) -> str: ...
+    @property
+    def root(self) -> Path: ...
+    @property
+    def image(self) -> str | None: ...
+    @property
+    def platform(self) -> str | None: ...
+    def _desktop_tmux_send_keys(self, keys: list[str]) -> None: ...
+    def _desktop_tmux_send_text(self, text: str) -> None: ...
+    def _desktop_screenshot_bytes(self) -> bytes | None: ...
+    def _container_read_file(self, path: str) -> str: ...
+
 
 _SENTINEL_RE = re.compile(r"(\d+)\s+(\d+)\s+(\S+)")
 
@@ -34,7 +52,7 @@ class VNCTerminal:
     Public API mirrors ``SandboxTerminal`` for compatibility.
     """
 
-    def __init__(self, sandbox: DesktopSandbox, host: str = "127.0.0.1", port: int = 5900, *, type_delay: float = 0.05) -> None:
+    def __init__(self, sandbox: _VNCSandbox, host: str = "127.0.0.1", port: int = 5900, *, type_delay: float = 0.05) -> None:
         self._sandbox = sandbox
         self._host = host
         self._port = port
