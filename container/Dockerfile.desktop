@@ -19,6 +19,13 @@ ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python \
 RUN curl -fsSL https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/opt/uv/bin sh \
     && uv python install 3.12
 
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path \
+    && ln -s /root/.cargo/bin/cargo /usr/local/bin/cargo \
+    && ln -s /root/.cargo/bin/rustc /usr/local/bin/rustc
+
+RUN curl -fsSL https://bun.sh/install | bash \
+    && ln -s /root/.bun/bin/bun /usr/local/bin/bun
+
 COPY entrypoint.sh /entrypoint.sh
 COPY .zshrc /etc/nowbox/.zshrc
 RUN chmod +x /entrypoint.sh

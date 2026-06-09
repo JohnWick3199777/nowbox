@@ -184,9 +184,9 @@ class VNCTerminal:
     # Input API
     # ------------------------------------------------------------------
 
-    def run(self, command, *, cwd=None, env=None, check: bool = False) -> SandboxResult:
+    def run(self, command, *, cwd=None, env=None, check: bool = False, timeout: float = 120) -> SandboxResult:
         normalized = normalize_command(command)
-        return self._type_command(normalized).enter(cwd=cwd, env=env, check=check)
+        return self._type_command(normalized).enter(cwd=cwd, env=env, check=check, timeout=timeout)
 
     def type(self, text: str) -> VNCTerminal:
         self._ensure_connected()
@@ -250,7 +250,7 @@ class VNCTerminal:
             return self.type(key)
         raise ValueError(f"unknown key: {key!r}")
 
-    def enter(self, *, cwd=None, env=None, check: bool = False) -> SandboxResult:
+    def enter(self, *, cwd=None, env=None, check: bool = False, timeout: float = 120) -> SandboxResult:
         command = self._pending_command if self._pending_command is not None else self._pending_text
         self._line_started = False
         self._pending_text = ""
@@ -280,7 +280,7 @@ class VNCTerminal:
         else:
             self._tmux_send("", enter=True)
 
-        seq, exit_code, new_cwd = self._wait_sentinel(timeout=30)
+        seq, exit_code, new_cwd = self._wait_sentinel(timeout=timeout)
         # Let the capture thread grab the settled output before the caller sends the next command.
         if self.is_recording:
             time.sleep(0.3)
