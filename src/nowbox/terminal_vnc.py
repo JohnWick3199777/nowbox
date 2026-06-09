@@ -1,4 +1,5 @@
 """VNCTerminal — visual terminal backed by a VNC-connected xterm container."""
+
 from __future__ import annotations
 
 import re
@@ -188,30 +189,36 @@ class VNCTerminal:
                 self._pending_text = self._pending_text[:-1]
                 self._pending_command = self._pending_text
                 self._ensure_connected()
-                subprocess.run(
-                    ["container", "exec", self._sandbox._name,
-                     "tmux", "send-keys", "-t", self._TMUX_SESSION, "BSpace"],
-                    capture_output=True,
-                )
+                self._sandbox._desktop_tmux_send_keys(["BSpace"])
             return self
         if lower == "tab":
             self._ensure_connected()
             if self._pending_text:
                 self._tmux_send(self._pending_text)
                 self._pending_text = ""
-            subprocess.run(
-                ["container", "exec", self._sandbox._name,
-                 "tmux", "send-keys", "-t", self._TMUX_SESSION, "Tab"],
-                capture_output=True,
-            )
+            self._sandbox._desktop_tmux_send_keys(["Tab"])
             time.sleep(0.3)
             return self
         # Map common names to tmux key names
         _TMUX_KEYS = {
-            "escape": "Escape", "up": "Up", "down": "Down", "left": "Left", "right": "Right",
-            "ctrl+c": "C-c", "ctrl+d": "C-d", "ctrl+z": "C-z",
-            "f1": "F1", "f2": "F2", "f3": "F3", "f4": "F4", "f5": "F5",
-            "f6": "F6", "f7": "F7", "f8": "F8", "f9": "F9", "f10": "F10",
+            "escape": "Escape",
+            "up": "Up",
+            "down": "Down",
+            "left": "Left",
+            "right": "Right",
+            "ctrl+c": "C-c",
+            "ctrl+d": "C-d",
+            "ctrl+z": "C-z",
+            "f1": "F1",
+            "f2": "F2",
+            "f3": "F3",
+            "f4": "F4",
+            "f5": "F5",
+            "f6": "F6",
+            "f7": "F7",
+            "f8": "F8",
+            "f9": "F9",
+            "f10": "F10",
             "q": "q",
         }
         if lower in _TMUX_KEYS:
@@ -219,11 +226,7 @@ class VNCTerminal:
             if self._pending_text:
                 self._tmux_send(self._pending_text)
                 self._pending_text = ""
-            subprocess.run(
-                ["container", "exec", self._sandbox._name,
-                 "tmux", "send-keys", "-t", self._TMUX_SESSION, _TMUX_KEYS[lower]],
-                capture_output=True,
-            )
+            self._sandbox._desktop_tmux_send_keys([_TMUX_KEYS[lower]])
             return self
         if len(key) == 1:
             return self.type(key)
@@ -240,25 +243,31 @@ class VNCTerminal:
         started = time.monotonic()
 
         from nowbox.utils import command_text as _cmd_text
+
         cmd_str = (_cmd_text(command) if not isinstance(command, str) else command).strip()
 
         if cwd is not None and self._current_cwd != Path(cwd):
             import shlex as _shlex
+
             self._tmux_send(f"cd {_shlex.quote(str(cwd))}", enter=True)
             self._wait_sentinel(timeout=8)
 
         if cmd_str:
             if env:
                 import shlex
+
                 prefix = " ".join(f"{k}={shlex.quote(v)}" for k, v in env.items())
                 cmd_str = f"{prefix} {cmd_str}"
-            # Wrap with tee so output is visible in the terminal recording AND
-            # captured to a file we can read back without re-running the command.
-            self._tmux_send(f"{{ {cmd_str}; }} 2>&1 | tee /tmp/.nowbox_stdout", enter=True)
+            # Capture pane output while typing the user's original command into
+            # the visible terminal. This avoids leaking capture wrappers into
+            # recordings.
+            self._sandbox._desktop_tmux_command(["pipe-pane", "-o", "-t", self._TMUX_SESSION, "cat > /tmp/.nowbox_stdout"])
+            self._tmux_send(cmd_str, enter=True)
         else:
             self._tmux_send("", enter=True)
 
         seq, exit_code, new_cwd = self._wait_sentinel(timeout=30)
+        self._sandbox._desktop_tmux_command(["pipe-pane", "-t", self._TMUX_SESSION])
         # Let the capture thread grab the settled output before the caller sends the next command.
         if self.is_recording:
             time.sleep(0.3)
@@ -303,24 +312,12 @@ class VNCTerminal:
         # When recording, send one character at a time with a sleep between each.
         if self.is_recording and self._type_delay > 0 and text:
             for ch in text:
-                subprocess.run(
-                    ["container", "exec", self._sandbox._name,
-                     "tmux", "send-keys", "-t", self._TMUX_SESSION, ch],
-                    capture_output=True,
-                )
+                self._sandbox._desktop_tmux_send_keys([ch])
                 time.sleep(self._type_delay)
         elif text:
-            subprocess.run(
-                ["container", "exec", self._sandbox._name,
-                 "tmux", "send-keys", "-t", self._TMUX_SESSION, text],
-                capture_output=True,
-            )
+            self._sandbox._desktop_tmux_send_keys([text])
         if enter:
-            subprocess.run(
-                ["container", "exec", self._sandbox._name,
-                 "tmux", "send-keys", "-t", self._TMUX_SESSION, "Enter"],
-                capture_output=True,
-            )
+            self._sandbox._desktop_tmux_send_keys(["Enter"])
 
     # ------------------------------------------------------------------
     # Sentinel polling
@@ -349,12 +346,7 @@ class VNCTerminal:
 
     def _screenshot_bytes(self) -> bytes | None:
         """Capture the current Xvfb display via scrot inside the container."""
-        r = subprocess.run(
-            ["container", "exec", "--env", "DISPLAY=:1", self._sandbox._name,
-             "scrot", "--silent", "-"],
-            capture_output=True,
-        )
-        return r.stdout if r.returncode == 0 and r.stdout else None
+        return self._sandbox._desktop_screenshot_bytes()
 
     def _capture_loop(self) -> None:
         prev_hash: int | None = None
@@ -403,9 +395,23 @@ class VNCTerminal:
             concat_path.write_text("".join(concat_lines))
 
             subprocess.run(
-                ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_path),
-                 "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart",
-                 str(path)],
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-f",
+                    "concat",
+                    "-safe",
+                    "0",
+                    "-i",
+                    str(concat_path),
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-movflags",
+                    "+faststart",
+                    str(path),
+                ],
                 check=True,
                 capture_output=True,
             )
@@ -416,6 +422,7 @@ class VNCTerminal:
 
     def _type_command(self, command: list[str] | str) -> VNCTerminal:
         from nowbox.utils import command_text
+
         self._pending_command = command
         self._ensure_prompt()
         self._pending_text = command_text(command)

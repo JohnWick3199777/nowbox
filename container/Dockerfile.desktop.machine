@@ -1,0 +1,27 @@
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    xvfb \
+    x11vnc \
+    xterm \
+    zsh \
+    tmux \
+    scrot \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python \
+    PATH=/opt/uv/bin:$PATH
+
+RUN curl -fsSL https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/opt/uv/bin sh \
+    && uv python install 3.12
+
+COPY entrypoint.sh /entrypoint.sh
+COPY machine-init.sh /sbin/init
+COPY .zshrc /etc/nowbox/.zshrc
+RUN chmod +x /entrypoint.sh /sbin/init
+
+EXPOSE 5900
