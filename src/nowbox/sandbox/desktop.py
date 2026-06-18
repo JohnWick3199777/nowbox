@@ -7,10 +7,14 @@ import time
 import uuid
 from collections.abc import Mapping
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from nowbox.sandbox.base import Sandbox
 from nowbox.types import Command, SandboxResult, SandboxStatus
 from nowbox.utils import normalize_command, strip_ansi
+
+if TYPE_CHECKING:
+    from nowbox.terminal_vnc import VNCTerminal
 
 _NOWBOX_LABEL = "nowbox.managed=true"
 
@@ -51,7 +55,7 @@ class DesktopSandbox(Sandbox):
         self._status: SandboxStatus = "created"
         self._volumes = volumes or []
         self._vnc_port = vnc_port
-        self._terminal: object | None = None  # lazy — avoids circular import
+        self._terminal: VNCTerminal | None = None
 
     # --- lifecycle ---
 
@@ -60,18 +64,12 @@ class DesktopSandbox(Sandbox):
         subprocess.run(["container", "stop", "--time", "1", self._name], capture_output=True)
         subprocess.run(["container", "delete", self._name], capture_output=True)
 
-        cmd = [
-            "container", "run",
-            "--name", self._name,
-            "--label", _NOWBOX_LABEL,
-            "--publish", f"{self._vnc_port}:5900",
-            "--detach",
-        ]
+        cmd = ["container", "run", "--name", self._name, "--label", _NOWBOX_LABEL, "--publish", f"{self._vnc_port}:5900", "--detach"]
         for v in self._volumes:
             cmd += ["--volume", v]
         cmd += [self._image]
 
-        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        self._run_container_checked(cmd)
         self._status = "running"
         atexit.register(self._atexit_cleanup)
         self._wait_for_vnc(timeout=20)
@@ -79,6 +77,7 @@ class DesktopSandbox(Sandbox):
     def _wait_for_vnc(self, *, timeout: float) -> None:
         """Block until the VNC server inside the container accepts connections."""
         import socket as _socket
+
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
@@ -98,7 +97,7 @@ class DesktopSandbox(Sandbox):
         """Stop and delete the container."""
         if self._terminal is not None:
             try:
-                self._terminal.close()  # type: ignore[union-attr]
+                self._terminal.close()
             except Exception:
                 pass
         subprocess.run(["container", "stop", "--time", "1", self._name], capture_output=True)
@@ -150,16 +149,12 @@ class DesktopSandbox(Sandbox):
     def terminal(self):  # -> VNCTerminal (avoid circular import at class level)
         if self._terminal is None:
             from nowbox.terminal_vnc import VNCTerminal
+
             self._terminal = VNCTerminal(self, host="127.0.0.1", port=self._vnc_port)
         return self._terminal
 
     def run(
-        self,
-        command: Command,
-        *,
-        cwd: str | os.PathLike[str] | None = None,
-        env: Mapping[str, str] | None = None,
-        check: bool = False,
+        self, command: Command, *, cwd: str | os.PathLike[str] | None = None, env: Mapping[str, str] | None = None, check: bool = False
     ) -> SandboxResult:
         normalized = normalize_command(command)
         working_dir = Path(cwd) if cwd is not None else self.root
@@ -195,10 +190,30 @@ class DesktopSandbox(Sandbox):
             args += ["sh", "-c", command]
         return args
 
+    def _run_container_checked(self, cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            return result
+
+        details = "\n".join(part for part in (result.stderr.strip(), result.stdout.strip()) if part)
+        if not details:
+            details = f"container exited with status {result.returncode}"
+        raise RuntimeError(f"Failed to start desktop container {self._name!r}:\n{details}")
+
+    def _desktop_tmux_send_keys(self, keys: list[str]) -> None:
+        self._desktop_tmux_command(["send-keys", "-t", "nowbox", *keys])
+
+    def _desktop_tmux_send_text(self, text: str) -> None:
+        self._desktop_tmux_command(["send-keys", "-t", "nowbox", "-l", text])
+
+    def _desktop_tmux_command(self, args: list[str]) -> None:
+        subprocess.run(["container", "exec", self._name, "tmux", *args], capture_output=True)
+
+    def _desktop_screenshot_bytes(self) -> bytes | None:
+        result = subprocess.run(["container", "exec", "--env", "DISPLAY=:1", self._name, "scrot", "--silent", "-"], capture_output=True)
+        return result.stdout if result.returncode == 0 and result.stdout else None
+
     def _container_read_file(self, path: str) -> str:
         """Read a file inside the container and return its content as a string."""
-        result = subprocess.run(
-            ["container", "exec", self._name, "cat", path],
-            capture_output=True, text=True,
-        )
+        result = subprocess.run(["container", "exec", self._name, "cat", path], capture_output=True, text=True)
         return result.stdout

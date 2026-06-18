@@ -27,9 +27,8 @@ RUN curl -fsSL https://bun.sh/install | bash \
     && ln -s /root/.bun/bin/bun /usr/local/bin/bun
 
 COPY entrypoint.sh /entrypoint.sh
+COPY machine-init.sh /sbin/init
 COPY .zshrc /etc/nowbox/.zshrc
-RUN chmod +x /entrypoint.sh
+RUN chmod +x /entrypoint.sh /sbin/init
 
 EXPOSE 5900
-
-CMD ["/entrypoint.sh"]
